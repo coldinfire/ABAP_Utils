@@ -1,0 +1,44 @@
+FUNCTION ZRFC_BASIC_HU_PACK.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(HUKEY) TYPE  BAPIHUKEY-HU_EXID
+*"     VALUE(ITEMPROPOSAL) TYPE  BAPIHUITMPROPOSAL
+*"     VALUE(CWM_ITEMPROPOSAL) TYPE  /CWM/BAPIHUITMPROPOSAL OPTIONAL
+*"     VALUE(I_FRAME_HEAD) TYPE  ZWS_FRAME_HEAD
+*"  EXPORTING
+*"     VALUE(E_RESULT) TYPE  BAPI_MTYPE
+*"     VALUE(E_MESSAGE) TYPE  BAPI_MSG
+*"  TABLES
+*"      SERIALNUMBERS STRUCTURE  BAPIHUITMSERIAL OPTIONAL
+*"      RETURN STRUCTURE  BAPIRET2
+*"----------------------------------------------------------------------
+
+  zmac_rfc_log_begion.
+
+  INCLUDE zws_request_handle.
+* Return receive request success message to WM
+  e_result  = 'S'.
+  e_message = 'Data received successfully'.
+
+  CALL FUNCTION 'RM_FREE_SESSION_CHECK'
+    EXCEPTIONS
+      no_free_session = 1
+      OTHERS          = 2.
+  IF sy-subrc EQ 0.
+    CALL FUNCTION 'ZRFC_BASIC_HU_PACK_ASYNC' STARTING NEW TASK 'ZRFC_BASIC_HU_PACK'
+      EXPORTING
+        hukey         = hukey
+        itemproposal  = itemproposal
+        i_frame_head  = i_frame_head
+      TABLES
+        serialnumbers = serialnumbers
+        return        = return.
+  ELSE.
+    e_result  = 'E'.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    INTO e_message
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+ENDFUNCTION.
