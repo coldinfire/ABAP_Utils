@@ -1,0 +1,873 @@
+*************************************************************************************************
+*&  PROGRAMMING HEADER INFORMATION                                                              *
+*&----------------------------------------------------------------------------------------------*
+
+REPORT ZUT_IMPORT_GENERAL.
+TYPE-POOLS slis.
+
+FIELD-SYMBOLS: <value> TYPE ANY.
+FIELD-SYMBOLS: <dyn_table_txt> TYPE table,
+               <dyn_table>     TYPE table,
+               <dyn_wa>        TYPE ANY.
+DATA: dyn_table_txt TYPE REF TO data.
+DATA: dyn_table TYPE REF TO data.
+DATA: dyn_wa TYPE REF TO data.
+
+*上传：
+DATA: gt_data TYPE alsmex_tabline OCCURS 0 WITH HEADER LINE.
+
+"读取关键行
+DATA: BEGIN OF gs_fields,
+  position  TYPE dd03l-position,
+  col       TYPE i,
+  fieldname TYPE dd03l-fieldname,
+  domname   TYPE dd03l-domname,
+END OF gs_fields,
+gt_fields LIKE TABLE OF gs_fields..
+CLEAR: gt_fields[].
+
+*txt专用结构
+DATA: gt_fact_save TYPE lvc_t_fcat.
+
+DATA: gs_fieldcat TYPE lvc_s_fcat,              "字段工作区
+      gt_fieldcat TYPE lvc_t_fcat.
+
+DATA: gs_list TYPE lvc_s_drop.
+DATA: gt_list TYPE lvc_t_drop.
+
+DATA: gt_listheader TYPE slis_t_listheader,            "ALV 表头
+      gs_setting    TYPE lvc_s_glay,
+      gs_layout     TYPE lvc_s_layo.                  "ALV布局工作区
+
+DATA: gs_stbl TYPE lvc_s_stbl.
+DATA: gcl_alv_grid TYPE REF TO cl_gui_alv_grid.
+DATA: gs_events TYPE slis_alv_event,
+      gt_events TYPE slis_t_event.
+DATA: gv_msg TYPE string.
+
+DATA: gs_root TYPE REF TO cx_root.
+
+SELECTION-SCREEN BEGIN OF BLOCK bk01 WITH FRAME TITLE text-001.
+
+SELECTION-SCREEN COMMENT /1(70) comm0.
+
+PARAMETERS: p_tab TYPE char20 OBLIGATORY.
+SELECTION-SCREEN COMMENT /1(70) comm1.
+PARAMETER: p_file TYPE rlgrap-filename OBLIGATORY MEMORY ID pfn.
+PARAMETERS: r_excel RADIOBUTTON GROUP g1 DEFAULT 'X',  "excel
+r_txt   RADIOBUTTON GROUP g1. "txt
+
+SELECTION-SCREEN END OF BLOCK bk01.
+
+SELECTION-SCREEN BEGIN OF BLOCK bk02 WITH FRAME TITLE text-002.
+
+SELECTION-SCREEN COMMENT /1(70) comm6.
+SELECTION-SCREEN COMMENT /1(70) comm7.
+
+SELECT-OPTIONS: s_row FOR sy-tabix NO-EXTENSION DEFAULT 1 TO 30000.
+SELECTION-SCREEN COMMENT /1(70) comm2.
+SELECT-OPTIONS: s_col FOR sy-tabix NO-EXTENSION DEFAULT 1 TO 50.
+SELECTION-SCREEN COMMENT /1(70) comm3.
+
+SELECTION-SCREEN SKIP 2.
+
+PARAMETERS: p_key TYPE i DEFAULT 0.
+SELECTION-SCREEN COMMENT /1(70) comm4.
+SELECTION-SCREEN COMMENT /1(70) comm5.
+
+SELECTION-SCREEN END OF BLOCK bk02.
+
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  PERFORM frm_vq_fn CHANGING p_file.
+
+AT SELECTION-SCREEN OUTPUT.
+  comm0 = '大数据请使用R_TXT方法上传,R_TXT文件需要使用TXT文件（参考LSMW)'.
+  comm1 = '请输入数据库表名称'.
+  comm2 = '开始行必须正确，结束行是最大结束行'.
+  comm3 = '开始列和结束列通常不用改动'.
+  comm4 = '当关键行= 0时候，导入模板字段必须和系统表一致，排除MANDT字段'.
+  comm5 = '当关键行<>0时候，导入模板字段必须手动分配在EXCEL的某一行，例如：MATNR、KUNNR等'.
+  comm6 = 'R_EXCEL专用设置，R_TXT以下设置无效'.
+
+END-OF-SELECTION.
+  SELECT COUNT(*)
+  FROM dd02l
+  WHERE tabname = p_tab
+  AND as4local = 'A'.
+  IF sy-subrc NE 0.
+    MESSAGE s001(00) WITH '表在SAP系统中不存在' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+
+  CASE 'X'.
+    WHEN r_excel.
+      PERFORM frm_create_table_excel.
+      PERFORM frm_upload.
+    WHEN r_txt.
+      PERFORM frm_create_table_excel.
+      PERFORM frm_create_table_txt.
+      PERFORM frm_upload_txt.
+    WHEN OTHERS.
+  ENDCASE.
+  PERFORM frm_ready_report.
+  PERFORM frm_show_alv.
+
+*&---------------------------------------------------------------------*
+*&      Form  frm_vq_fn
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->I_FN       text
+*----------------------------------------------------------------------*
+FORM frm_vq_fn CHANGING i_fn.
+
+  DATA:ltd_ft TYPE filetable,
+        lth_ft TYPE file_table,
+        lwk_rc TYPE i,
+        lwk_ua TYPE i.
+
+  DATA:lwk_fn TYPE string.
+
+  DATA: lv_filter TYPE string.
+  CONCATENATE cl_gui_frontend_services=>filetype_excel ';' cl_gui_frontend_services=>filetype_text INTO lv_filter.
+*  lv_filter = cl_gui_frontend_services=>filetype_excel && ';' && cl_gui_frontend_services=>filetype_text.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+  EXPORTING
+    file_filter             = lv_filter
+  CHANGING
+    file_table              = ltd_ft
+    rc                      = lwk_rc
+*     user_action             = lwk_ua
+  EXCEPTIONS
+    file_open_dialog_failed = 1
+    cntl_error              = 2
+    error_no_gui            = 3
+    not_supported_by_gui    = 4
+    OTHERS                  = 5.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    CHECK lwk_ua = 0.
+    READ TABLE ltd_ft INTO lth_ft INDEX 1.
+    i_fn = lth_ft-filename.
+  ENDIF.
+ENDFORM. " VQ_FN
+
+*&---------------------------------------------------------------------*
+*&      Form  frm_create_table_excel
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_create_table_excel.
+
+*创建动态表结构
+  CREATE DATA dyn_table TYPE TABLE OF (p_tab).
+
+*创建动态内表
+  ASSIGN dyn_table->* TO <dyn_table>.
+
+*创建动态工作区结构
+  CREATE DATA dyn_wa LIKE LINE OF <dyn_table>.
+
+*创建动态工作区
+  ASSIGN dyn_wa->* TO <dyn_wa>.
+
+  SELECT position
+  fieldname
+  domname
+  INTO CORRESPONDING FIELDS OF TABLE gt_fields
+  FROM dd03l
+  WHERE tabname = p_tab
+  AND as4local = 'A'.
+  DELETE gt_fields WHERE fieldname = 'MANDT' OR fieldname = '.INCLUDE'.
+  SORT gt_fields BY position.
+  LOOP AT gt_fields INTO gs_fields.
+    gs_fields-col = sy-tabix.
+    MODIFY gt_fields FROM gs_fields.
+  ENDLOOP.
+ENDFORM.                    "frm_create_table_excel
+
+
+*&---------------------------------------------------------------------*
+*&      Form  UPLOAD
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_upload .
+  "可以考虑修改函数
+  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+*倒入EXCEL数据到内表
+  EXPORTING
+    filename                = p_file
+    i_begin_col             = s_col-low
+    i_begin_row             = s_row-low
+    i_end_col               = s_col-high
+    i_end_row               = s_row-high
+  TABLES
+    intern                  = gt_data
+  EXCEPTIONS
+    inconsistent_parameters = 1
+    upload_ole              = 2
+    OTHERS                  = 3.
+  IF sy-subrc NE 0.
+    RETURN.
+  ENDIF.
+  SORT gt_data BY row col value.
+
+
+  IF p_key NE 0.
+    CLEAR: gt_fields.
+    LOOP AT gt_data WHERE row = p_key.
+      CLEAR: gs_fields.
+      gs_fields-col = gt_data-col.
+      gs_fields-fieldname = gt_data-value.
+      "读取域
+      SELECT SINGLE domname
+      INTO gs_fields-domname
+      FROM dd03l
+      WHERE tabname = p_tab
+      AND fieldname = gs_fields-fieldname
+      AND as4local = 'A'.
+      APPEND gs_fields TO gt_fields.
+    ENDLOOP.
+  ENDIF.
+
+  DATA: lv_col TYPE i.
+  LOOP AT gt_data WHERE row NE p_key.
+    READ TABLE gt_fields INTO gs_fields WITH KEY col = gt_data-col.
+    IF sy-subrc = 0.
+      UNASSIGN <value>.
+      ASSIGN COMPONENT gs_fields-fieldname OF STRUCTURE <dyn_wa> TO <value>.
+
+      IF <value> IS ASSIGNED AND gt_data-value IS NOT INITIAL.
+        "假如接受类型是数值，发现数值
+        DATA: datatype TYPE REF TO cl_abap_datadescr.
+        datatype ?= cl_abap_typedescr=>describe_by_data( <value> ).
+        CASE datatype->type_kind.
+          WHEN 'P' OR 'I' .
+            PERFORM find_num CHANGING gt_data-value.
+          WHEN 'D'.
+            PERFORM find_date CHANGING gt_data-value.
+          WHEN 'T'.
+            PERFORM find_time CHANGING gt_data-value.
+          WHEN OTHERS.
+        ENDCASE.
+
+        "转换例程。
+        DATA: lv_convexit TYPE dd04l-convexit.
+        DATA: lv_funtion_name TYPE string.
+        CLEAR: lv_convexit,lv_funtion_name.
+        SELECT SINGLE convexit
+        INTO lv_convexit
+        FROM dd04l
+        WHERE rollname = gs_fields-domname
+        AND as4local = 'A'.
+        IF lv_convexit IS NOT INITIAL.
+          TRY .
+              CONCATENATE 'CONVERSION_EXIT_' lv_convexit '_INPUT' INTO lv_funtion_name.
+*              lv_funtion_name = 'CONVERSION_EXIT_' && lv_convexit && '_INPUT'.
+              CALL FUNCTION lv_funtion_name
+                EXPORTING
+                  input  = gt_data-value
+                IMPORTING
+                  output = <value>.
+            CATCH cx_root INTO gs_root.
+              "异常
+              <value> = <value>.
+          ENDTRY.
+        ELSE.
+          <value> = gt_data-value.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    AT END OF row.
+      APPEND <dyn_wa> TO <dyn_table>.
+      CLEAR: <dyn_wa>.
+    ENDAT.
+  ENDLOOP.
+
+  DATA: lv_line TYPE i.
+  lv_line = LINES( <dyn_table> ).
+
+  MESSAGE s001(00) WITH '导入：' lv_line '条数据'.
+ENDFORM.                    " UPLOAD
+
+
+*&---------------------------------------------------------------------*
+*&      Form  frm_create_table_txt
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_create_table_txt.
+  DATA: lv_structure_name TYPE dd02l-tabname.
+  DATA: lt_fact TYPE lvc_t_fcat.
+  FIELD-SYMBOLS: <fs_fact> TYPE lvc_s_fcat.
+
+  lv_structure_name = p_tab.
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_client_never_display = ''
+      i_structure_name       = lv_structure_name
+    CHANGING
+      ct_fieldcat            = lt_fact
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+  gt_fact_save[] = lt_fact[]. "后续使用
+
+
+  DELETE lt_fact WHERE fieldname = 'MANDT' OR fieldname = '.INCLUDE'.
+  SORT lt_fact BY col_pos.
+  LOOP AT lt_fact ASSIGNING <fs_fact>.
+    <fs_fact>-intlen = <fs_fact>-intlen * 2.
+    <fs_fact>-datatype = 'CHAR'.
+    <fs_fact>-inttype = 'C'.
+    <fs_fact>-domname = ''.
+    <fs_fact>-ref_table = ''.
+    <fs_fact>-dd_outlen = <fs_fact>-dd_outlen * 2.
+  ENDLOOP.
+
+
+  CALL METHOD cl_alv_table_create=>create_dynamic_table
+  EXPORTING
+    it_fieldcatalog = lt_fact
+*     I_LENGTH_IN_BYTE = 'X'
+  IMPORTING
+    ep_table        = dyn_table_txt.
+  ASSIGN dyn_table_txt->*  TO <dyn_table_txt>.
+ENDFORM.                    "frm_create_table_txt
+
+*&---------------------------------------------------------------------*
+*&      Form  frm_upload_txt
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_upload_txt.
+  DATA: lv_filename TYPE string.
+  DATA: frm_it_data  TYPE string OCCURS 0 WITH HEADER LINE,
+        frm_it_field TYPE string OCCURS 0 WITH HEADER LINE,
+        frm_tabchar  TYPE c VALUE cl_abap_char_utilities=>horizontal_tab.
+  FIELD-SYMBOLS <frm_field> TYPE ANY.
+  FIELD-SYMBOLS <fs_line> TYPE ANY.
+  FIELD-SYMBOLS <value_line> TYPE ANY.
+  FIELD-SYMBOLS <value_wa> TYPE ANY.
+
+  IF p_file IS INITIAL.
+    MESSAGE '文件禁止为空' TYPE 'S' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+
+  lv_filename = p_file.
+  CALL FUNCTION 'GUI_UPLOAD'
+    EXPORTING
+      filename                = lv_filename
+      filetype                = 'ASC'
+      has_field_separator     = 'X'
+      read_by_line            = 'X'
+    TABLES
+      data_tab                = <dyn_table_txt>
+    EXCEPTIONS
+      conversion_error        = 1
+      file_open_error         = 2
+      file_read_error         = 3
+      invalid_type            = 4
+      no_batch                = 5
+      unknown_error           = 6
+      invalid_table_width     = 7
+      gui_refuse_filetransfer = 8
+      customer_error          = 9
+      dp_out_of_memory        = 10
+      access_denied           = 11.
+
+  LOOP AT <dyn_table_txt> ASSIGNING <fs_line>.
+    CLEAR: <dyn_wa>,gs_fieldcat.
+    MOVE-CORRESPONDING <fs_line> TO <dyn_wa>.
+    LOOP AT gt_fact_save INTO gs_fieldcat WHERE convexit IS NOT INITIAL OR ( inttype CA 'PDT' ).
+      ASSIGN COMPONENT gs_fieldcat-fieldname OF STRUCTURE <fs_line> TO <value_line>.
+      ASSIGN COMPONENT gs_fieldcat-fieldname OF STRUCTURE <dyn_wa> TO <value_wa>.
+
+      IF <value_line> IS ASSIGNED AND <value_line> IS NOT INITIAL.
+        CASE gs_fieldcat-inttype.
+          WHEN 'P' OR 'I' .
+            PERFORM find_num CHANGING <value_line>.
+          WHEN 'D'.
+            PERFORM find_date CHANGING <value_line>.
+          WHEN 'T'.
+            PERFORM find_time CHANGING <value_line>.
+          WHEN OTHERS.
+        ENDCASE.
+        IF gs_fieldcat-convexit IS NOT INITIAL.
+          TRY .
+              DATA: lv_function_name TYPE string.
+              CONCATENATE  'CONVERSION_EXIT_' gs_fieldcat-convexit '_INPUT' INTO lv_function_name.
+*              lv_funtion_name = 'CONVERSION_EXIT_' && gs_fact-convexit && '_INPUT'.
+              CALL FUNCTION lv_function_name
+                EXPORTING
+                  input  = <value_line>
+                IMPORTING
+                  output = <value_wa>.
+
+            CATCH cx_root INTO gs_root.
+              "异常
+              <value_wa> = <value_line>.
+          ENDTRY.
+        ELSE.
+          <value_wa> = <value_line>.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    APPEND <dyn_wa> TO <dyn_table>.
+  ENDLOOP.
+
+  DATA: lv_line TYPE i.
+  lv_line = LINES( <dyn_table> ).
+
+  MESSAGE s001(00) WITH '导入：' lv_line '条数据'.
+ENDFORM.                    "frm_upload_txt
+
+"匹配数字
+*&---------------------------------------------------------------------*
+*&      Form  find_num
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->TEXT       text
+*----------------------------------------------------------------------*
+FORM find_num CHANGING text.
+  DATA: l_alpha_numeric TYPE string.
+  DATA: l_strlen TYPE i.
+  DATA: l_char TYPE c.
+  l_alpha_numeric = '0123456789.'.
+  l_strlen = STRLEN( text ).
+  WHILE l_strlen <> 0.
+    l_strlen = l_strlen - 1.
+    l_char = text+l_strlen(1).
+    IF l_alpha_numeric NA l_char.
+      REPLACE SECTION OFFSET l_strlen LENGTH 1 OF text WITH ''.
+    ENDIF.
+  ENDWHILE.
+ENDFORM.                    "find_num
+
+"匹配日期
+*&---------------------------------------------------------------------*
+*&      Form  find_date
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->TEXT       text
+*----------------------------------------------------------------------*
+FORM find_date CHANGING text.
+  DATA: lv_split TYPE c.
+  DATA: lv_year TYPE n LENGTH 4.
+  DATA: lv_month TYPE n LENGTH 2.
+  DATA: lv_month_i TYPE i.
+  DATA: lv_day TYPE n LENGTH 2.
+  DATA: lv_day_i TYPE i.
+  IF text CA '.' .
+    lv_split = '.'.
+  ENDIF.
+  IF text CA '/'.
+    lv_split = '/'.
+  ENDIF.
+  IF text CA '-'.
+    lv_split = '-'.
+  ENDIF.
+
+  IF lv_split IS NOT INITIAL.
+    SPLIT text AT lv_split INTO lv_year lv_month lv_day.
+    lv_month = lv_month_i = lv_month. "补0
+    lv_day = lv_day_i = lv_day. "补0
+    CONCATENATE lv_year lv_month lv_day INTO text.
+*    text = lv_year && lv_month && lv_day.
+
+  ELSE.
+    DATA: l_alpha_numeric TYPE string.
+    DATA: l_strlen TYPE i.
+    DATA: l_char TYPE c.
+    l_alpha_numeric = '0123456789'.
+    l_strlen = STRLEN( text ).
+    WHILE l_strlen <> 0.
+      l_strlen = l_strlen - 1.
+      l_char = text+l_strlen(1).
+      IF l_alpha_numeric NA l_char.
+        REPLACE SECTION OFFSET l_strlen LENGTH 1 OF text WITH ''.
+      ENDIF.
+    ENDWHILE.
+  ENDIF.
+ENDFORM.                    "find_date
+
+"匹配时间
+*&---------------------------------------------------------------------*
+*&      Form  find_time
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->TEXT       text
+*----------------------------------------------------------------------*
+FORM find_time CHANGING text.
+  DATA: lv_split TYPE c.
+  DATA: lv_hour TYPE n LENGTH 2.
+  DATA: lv_hour_i TYPE i.
+  DATA: lv_min TYPE n LENGTH 2.
+  DATA: lv_min_i TYPE i.
+  DATA: lv_sec TYPE n LENGTH 2.
+  DATA: lv_sec_i TYPE i.
+  IF text CA ':' .
+    lv_split = ':'.
+  ENDIF.
+  IF text CA '：'.
+    lv_split = '：'.
+  ENDIF.
+
+  IF lv_split IS NOT INITIAL.
+    SPLIT text AT lv_split INTO lv_hour lv_min lv_sec.
+    lv_hour = lv_hour_i = lv_hour. "补0
+    lv_min = lv_min_i = lv_min. "补0
+    lv_sec = lv_sec_i = lv_sec. "补0
+    CONCATENATE lv_hour lv_min lv_sec INTO text.
+*    text = lv_hour && lv_min && lv_sec.
+
+  ELSE.
+    DATA: l_alpha_numeric TYPE string.
+    DATA: l_strlen TYPE i.
+    DATA: l_char TYPE c.
+    l_alpha_numeric = '0123456789'.
+    l_strlen = STRLEN( text ).
+    WHILE l_strlen <> 0.
+      l_strlen = l_strlen - 1.
+      l_char = text+l_strlen(1).
+      IF l_alpha_numeric NA l_char.
+        REPLACE SECTION OFFSET l_strlen LENGTH 1 OF text WITH ''.
+      ENDIF.
+    ENDWHILE.
+  ENDIF.
+ENDFORM.                    "find_time
+
+*&---------------------------------------------------------------------*
+* 逻辑实现部分
+*
+*&---------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*&      Form  FRM_READY_REPORT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_ready_report.
+  PERFORM frm_pre_fieldcat.   "设置字段
+  PERFORM frm_set_event.      "设置事件
+  PERFORM frm_set_layout.     "设置布局
+ENDFORM.                    "FRM_READY_REPORT
+
+*&---------------------------------------------------------------------*
+*&      Form  FRM_PRE_FIELDCAT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_pre_fieldcat .
+  CLEAR gs_fieldcat.
+  REFRESH gt_fieldcat.
+
+
+  DEFINE set_fieldcat.        " 定义字段宏
+    gs_fieldcat-fieldname = &1.
+    gs_fieldcat-tabname   = 'GT_OUT'.
+    gs_fieldcat-coltext = &2.
+    gs_fieldcat-outputlen    = &3.
+    gs_fieldcat-edit = &4.
+    gs_fieldcat-just      = 'L'.
+    gs_fieldcat-lowercase      = 'X'.
+    if &5 ne ''.
+      gs_fieldcat-datatype = &5.
+    endif.
+    if &6 ne ''.
+      gs_fieldcat-ref_table = &6.
+    endif.
+    if &7 ne ''.
+      gs_fieldcat-ref_field  = &7.
+    endif.
+    append gs_fieldcat to gt_fieldcat.
+    clear gs_fieldcat.
+  END-OF-DEFINITION.
+
+  DATA: r_tabdescr TYPE REF TO cl_abap_structdescr.
+  DATA: wa_field TYPE dfies,
+        t_dfies  TYPE  ddfields.
+
+  r_tabdescr ?= cl_abap_structdescr=>describe_by_name( p_tab ).
+  CALL METHOD cl_salv_data_descr=>read_structdescr
+    EXPORTING
+      r_structdescr = r_tabdescr
+    RECEIVING
+      t_dfies       = t_dfies.
+  LOOP AT t_dfies INTO wa_field.
+    CASE wa_field-fieldname.
+      WHEN 'MANDT' OR 'SEL'.
+        CONTINUE.
+      WHEN OTHERS.
+        set_fieldcat wa_field-fieldname wa_field-reptext '' '' '' p_tab wa_field-fieldname.
+    ENDCASE.
+  ENDLOOP.
+
+  DEFINE set_sort.  "定义排序宏
+    clear i_sort.
+    i_sort-fieldname = &1.
+    i_sort-spos = 1.
+    i_sort-up = 'X'.
+    i_sort-subtot = 'X'.
+    append i_sort.
+  END-OF-DEFINITION.
+*  SET_SORT 'GJAHR'.
+*  SET_SORT 'SEASON'.
+ENDFORM.                    " FRM_PRE_FIELDCAT
+
+*&---------------------------------------------------------------------*
+*&      Form  FRM_SHOW_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_show_alv .
+  IF <dyn_table> IS ASSIGNED.
+
+    CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+*       I_INTERFACE_CHECK        = ' '
+*       I_BYPASSING_BUFFER       =
+*       I_BUFFER_ACTIVE          =
+      i_callback_program       = sy-cprog
+      i_callback_pf_status_set = 'SUB_STATUS_SET'
+      i_callback_user_command  = 'SUB_USER_COMMAND'
+*       I_CALLBACK_TOP_OF_PAGE   = ' '
+*       I_CALLBACK_HTML_TOP_OF_PAGE       = ' '
+*       I_CALLBACK_HTML_END_OF_LIST       = ' '
+*       I_STRUCTURE_NAME         =
+*       I_BACKGROUND_ID          = ' '
+*       I_GRID_TITLE             =
+*       I_GRID_SETTINGS          = GS_SETTING   "编辑回填数据时候打开
+      is_layout_lvc            = gs_layout
+      it_fieldcat_lvc          = gt_fieldcat
+*       IT_EXCLUDING             =
+*       IT_SPECIAL_GROUPS_LVC    =
+*       IT_SORT_LVC              =
+*       IT_FILTER_LVC            =
+*       IT_HYPERLINK             =
+*       IS_SEL_HIDE              =
+*       I_DEFAULT                = 'X'
+      i_save                   = 'A'
+*       IS_VARIANT               =
+      it_events                = gt_events
+*       IT_EVENT_EXIT            =
+*       IS_PRINT_LVC             =
+*       IS_REPREP_ID_LVC         =
+*       I_SCREEN_START_COLUMN    = 0
+*       I_SCREEN_START_LINE      = 0
+*       I_SCREEN_END_COLUMN      = 0
+*       I_SCREEN_END_LINE        = 0
+*       I_HTML_HEIGHT_TOP        =
+*       I_HTML_HEIGHT_END        =
+*       IT_ALV_GRAPHICS          =
+*       IT_EXCEPT_QINFO_LVC      =
+*       IR_SALV_FULLSCREEN_ADAPTER        =
+*   IMPORTING
+*       E_EXIT_CAUSED_BY_CALLER  =
+*       ES_EXIT_CAUSED_BY_USER   =
+    TABLES
+      t_outtab                 = <dyn_table>
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+    IF sy-subrc <> 0.
+* Implement suGT_OUTle error handling here
+    ENDIF.
+
+  ENDIF.
+ENDFORM.                    " FRM_SHOW_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  SUB_TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM sub_top_of_page.
+  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+  EXPORTING
+    it_list_commentary = gt_listheader
+*     I_LOGO             =
+*     I_END_OF_LIST_GRID =
+*     I_ALV_FORM         =
+    .
+
+ENDFORM.                    "SUB_TOP_OF_PAGE
+*&---------------------------------------------------------------------*
+*&      Form  FRM_SET_LAYOUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_set_layout .
+  gs_setting-edt_cll_cb = 'X'.
+  gs_layout-cwidth_opt = 'X'.
+ENDFORM.                    " FRM_SET_LAYOUT
+
+*&---------------------------------------------------------------------*
+*&      Form  SUB_STATUS_SET
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM sub_status_set USING rt_extab TYPE slis_t_extab.
+  SET PF-STATUS 'STATUS01'.
+  SET TITLEBAR 'TITLE'.
+ENDFORM.                    "SUB_STATUS_SET
+*  ----------------------------------------------------------------------*
+*         CLASS lcl_event_receiver DEFINITION
+*定义类
+*  ----------------------------------------------------------------------*
+CLASS lcl_event_receiver DEFINITION.
+  PUBLIC SECTION.
+    METHODS data_changed FOR EVENT data_changed OF cl_gui_alv_grid
+    IMPORTING er_data_changed
+      e_onf4
+      e_onf4_before
+      e_onf4_after
+      e_ucomm.
+    METHODS handle_modify
+    FOR EVENT data_changed_finished OF cl_gui_alv_grid
+    IMPORTING e_modified et_good_cells.
+ENDCLASS.                    "LCL_EVENT_RECEIVER DEFINITION
+
+*  ----------------------------------------------------------------------*
+*         CLASS lcl_event_receiver IMPLEMENTATION
+* 定义方法
+*  ----------------------------------------------------------------------*
+CLASS lcl_event_receiver IMPLEMENTATION.
+  METHOD data_changed.
+    PERFORM handle_data_changed USING er_data_changed.
+  ENDMETHOD.                    "data_changed
+  METHOD handle_modify.
+    PERFORM handle_data_finish USING e_modified et_good_cells.
+  ENDMETHOD.                    "HANDLE_MODIFY
+ENDCLASS.                    "LCL_EVENT_RECEIVER IMPLEMENTATION
+
+*&---------------------------------------------------------------------*
+*&      Form  handle_data_finish
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->E_MODIFIED     text
+*      -->ET_GOOD_CELLS  text
+*----------------------------------------------------------------------*
+FORM handle_data_finish USING e_modified TYPE char01
+      et_good_cells TYPE lvc_t_modi.
+*在此处添加你自己的代码，改变传入ALV函数的那个内表的值，就能实现你的功能。
+  DATA: eh_good_cells TYPE lvc_s_modi.
+  IF e_modified = 'X'.
+    LOOP AT et_good_cells INTO eh_good_cells. "修改的行。
+    ENDLOOP.
+*-------------------------------------------------
+* 稳定刷新
+    gs_stbl-row = 'X'." 基于行的稳定刷新
+    gs_stbl-col = 'X'." 基于列稳定刷新
+    CALL METHOD gcl_alv_grid->refresh_table_display
+      EXPORTING
+        is_stable = gs_stbl.
+  ENDIF.
+
+ENDFORM.                    "handle_data_finish
+*&---------------------------------------------------------------------*
+*&      Form  handle_data_changed
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_ER_DATA_CHANGED  text
+*----------------------------------------------------------------------*
+FORM handle_data_changed  USING p_er_data_changed TYPE REF TO cl_alv_changed_data_protocol.
+*如果更新的reason字段长度小于10为则提示用户填入字符数不能低于10
+  DATA:mod_data        TYPE lvc_t_modi,
+        gs_out_mod_data TYPE lvc_s_modi.
+
+  mod_data = p_er_data_changed->mt_mod_cells.
+  LOOP AT mod_data INTO gs_out_mod_data.
+  ENDLOOP.
+ENDFORM.                    "handle_data_changed
+
+*&---------------------------------------------------------------------*
+*&      Form  FRM_SET_EVENT
+*定义事件
+*&---------------------------------------------------------------------*
+FORM frm_set_event .
+  CALL FUNCTION 'REUSE_ALV_EVENTS_GET'
+    EXPORTING
+      i_list_type     = 0
+    IMPORTING
+      et_events       = gt_events
+    EXCEPTIONS
+      list_type_wrong = 1
+      OTHERS          = 2.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  gs_events-name = 'CALLER_EXIT'.
+  gs_events-form = 'FRM_CALLER_EXIT'.
+  APPEND gs_events TO gt_events.
+
+ENDFORM.                    " FRM_SET_EVENT
+
+*&---------------------------------------------------------------------*
+*&      Form  F_CALLER_EXIT
+* 注册回车事件
+*&---------------------------------------------------------------------*
+FORM frm_caller_exit USING ls_data TYPE slis_data_caller_exit.
+  .
+
+  DATA gt_event_receiver TYPE REF TO lcl_event_receiver.
+
+  CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+    IMPORTING
+      e_grid = gcl_alv_grid.
+
+
+* 设置enter事件
+  CALL METHOD gcl_alv_grid->register_edit_event
+    EXPORTING
+      i_event_id = cl_gui_alv_grid=>mc_evt_enter
+    EXCEPTIONS
+      error      = 1
+      OTHERS     = 2.
+  CALL METHOD gcl_alv_grid->register_edit_event
+    EXPORTING
+      i_event_id = cl_gui_alv_grid=>mc_evt_modified
+    EXCEPTIONS
+      error      = 1
+      OTHERS     = 2.
+  IF sy-subrc <> 0.
+*   Implement suGT_OUTle error handling here
+  ENDIF.
+  CREATE OBJECT gt_event_receiver.
+  SET HANDLER gt_event_receiver->handle_modify FOR gcl_alv_grid.
+  SET HANDLER gt_event_receiver->data_changed FOR gcl_alv_grid.
+ENDFORM.                   "F_CALLER_EXIT
+
+
+*&---------------------------------------------------------------------*
+*&      Form  SUB_USER_COMMAND
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM sub_user_command USING s_ucomm TYPE sy-ucomm
+      re_selfield TYPE slis_selfield.
+
+  CALL METHOD gcl_alv_grid->check_changed_data. "触发数据变更
+  CASE s_ucomm.
+    WHEN 'SAVE'.
+      MODIFY (p_tab) FROM TABLE <dyn_table>.
+      COMMIT WORK AND WAIT.
+      MESSAGE '保存成功' TYPE 'S'.
+  ENDCASE.
+
+ENDFORM.                    "SUB_USER_COMMAND
