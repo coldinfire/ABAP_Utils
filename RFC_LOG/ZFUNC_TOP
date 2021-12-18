@@ -1,0 +1,42 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZFUNC_TOP
+*&---------------------------------------------------------------------*
+
+TYPE-POOLS abap.
+"因为通用名称，所以变量必须特殊
+DATA: ls_zz_log_callstack TYPE sys_calls,
+      lt_zz_log_callstack TYPE sys_callst.
+
+DATA: ls_zz_log_save TYPE zfunc_log.
+
+DATA: ls_zz_log_data_save TYPE zfunc_log_data,
+      lt_zz_log_data_save TYPE TABLE OF zfunc_log_data.
+
+DATA: ls_zz_log_fupararef TYPE fupararef,
+      lt_zz_log_fupararef TYPE TABLE OF fupararef.
+
+DATA: lv_zz_log_table_name TYPE string.
+
+DATA: lv_zz_log_id TYPE zfunc_log_data-id.
+DATA: id TYPE zfunc_log_data-id. " For resave macros field length
+
+DATA: lv_zz_log_opcode_usr_attr(1) TYPE x VALUE 5,
+      lv_zz_log_terminal           TYPE usr41-terminal.
+DATA: lv_zz_log_ip TYPE string.
+
+"判断是否产生 New ID
+DATA: lv_zz_log_is_run TYPE abap_bool.
+
+FIELD-SYMBOLS: <fs_zz_log_variable> TYPE ANY.
+FIELD-SYMBOLS: <fs_zz_log_variable_tab> TYPE ANY TABLE.
+
+DATA: lv_zz_log_string TYPE string.
+"Error Message
+DATA: lv_exc TYPE REF TO cx_root.
+DATA: lv_message TYPE bapi_msg.
+
+"Log 预留字段
+DATA: lv_user1 TYPE char50,
+      lv_user2  TYPE char50,
+      lv_user3  TYPE char50,
+      lv_user4  TYPE char50.
