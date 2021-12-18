@@ -1,0 +1,495 @@
+*****************************************************************
+*  System      :  *** ERP项目
+*  Module      :  **
+*  Program ID  : ZJT_TAB_SHOW
+*  Program     :  **
+*  Author      :  LIQC
+*  Date        :  20200731
+*  Description   :  ****
+*****************************************************************
+*  Modified Recorder :
+*  Date              C#NO                    Author                Content
+*  --------------------------------------------------------------------*
+*  修改日期           C票或变更文档ID         修改者                 修改内容
+*  或修改的传输请求号
+*****************************************************************
+*
+*&---------------------------------------------------------------------*
+REPORT zjt_tab_show.
+*&---------------------------------------------------------------------*
+* 数据定义部分
+*
+*&---------------------------------------------------------------------*
+TABLES:  zjt_tab_show.
+TYPE-pools: slis, vrm, abap.
+
+DATA: BEGIN OF gs_out,
+  node_per TYPE zjt_tab_show-node. "上层节点
+  INCLUDE STRUCTURE zjt_tab_show.
+DATA: END OF gs_out.
+DATA: gt_out LIKE TABLE OF gs_out.
+FIELD-symbols: <fs_out> LIKE gs_out.
+
+DATA: gt_tab LIKE TABLE OF gs_out.
+
+DATA: gs_fieldcat TYPE lvc_s_fcat,              "字段工作区
+      gt_fieldcat TYPE lvc_t_fcat.
+
+DATA: gs_list TYPE lvc_s_drop.
+DATA: gt_list TYPE lvc_t_drop.
+
+DATA: gt_listheader TYPE slis_t_listheader,            "ALV 表头
+      gs_setting    TYPE lvc_s_glay,
+      gs_layout     TYPE lvc_s_layo.                  "ALV布局工作区
+
+DATA: gs_sort TYPE lvc_s_sort,
+      gt_sort TYPE lvc_t_sort.
+DATA: gs_stbl TYPE lvc_s_stbl.
+DATA: gcl_alv_grid TYPE REF TO cl_gui_alv_grid.
+DATA: gs_events TYPE slis_alv_event,
+      gt_events TYPE slis_t_event.
+DATA: gs_fieldinfo TYPE slis_fieldinfo2,
+      gt_fieldinfo TYPE TABLE OF slis_fieldinfo2.
+DATA: gv_msg TYPE string.
+
+DATA: gv_field_sel TYPE char01.
+DATA: dref_str    TYPE REF TO DATA,
+dref_tab    TYPE REF TO DATA,
+dref_i      TYPE REF TO DATA,
+      itab_type   TYPE REF TO cl_abap_tabledescr,
+      struct_type TYPE REF TO cl_abap_structdescr,
+      comp_tab    TYPE cl_abap_structdescr=>component_table,
+      comp_descr  TYPE abap_componentdescr.
+FIELD-symbols :<fs_itab> TYPE STANDARD TABLE.
+
+DATA: g_alv_tree           TYPE REF TO cl_gui_alv_tree,
+      g_customer_container TYPE REF TO cl_gui_custom_container.
+DATA: gt_nkey TYPE lvc_t_nkey.
+
+CLASS lcl_tree_event_receiver DEFINITION deferred.
+DATA:g_application TYPE REF TO lcl_tree_event_receiver.
+
+*&---------------------------------------------------------------------*
+* 流程部分
+*
+*&---------------------------------------------------------------------*
+END-OF-selection.
+SET SCREEN 100.
+
+*Class defination
+*----------------------------------------------------------------------*
+*       CLASS LCL_TREE_EVENT_RECEIVER DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_tree_event_receiver DEFINITION.
+  PUBLIC SECTION.
+  METHODS handle_node_double_click                  "节点双击事件
+  FOR EVENT node_double_click OF cl_gui_alv_tree
+  IMPORTING node_key sender.
+
+  METHODS handle_item_double_click
+  FOR EVENT item_double_click OF cl_gui_alv_tree "项目双击事件
+  IMPORTING fieldname node_key.
+
+  METHODS handle_link_click
+  FOR EVENT link_click OF cl_gui_alv_tree "项目双击事件
+  IMPORTING fieldname node_key.
+
+  METHODS handle_header_click
+  FOR EVENT header_click OF cl_gui_alv_tree "项目双击事件
+  IMPORTING fieldname sender.
+ENDCLASS.                    "lcl_tree_event_receiver DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_tree_event_receiver IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_tree_event_receiver IMPLEMENTATION.
+
+  METHOD handle_node_double_click.
+    MESSAGE s208(00) WITH '节点双击事件'.
+  ENDMETHOD.                    "handle_node_double_click
+
+  METHOD handle_header_click.
+    MESSAGE s208(00) WITH '节点单机事件'.
+  ENDMETHOD.                    "handle_node_double_click
+
+  METHOD handle_link_click.
+    DATA: l_value TYPE lvc_value,
+          l_layi  TYPE lvc_t_layi,
+          l_layn  TYPE lvc_s_layn.
+
+    CALL METHOD g_alv_tree->get_outtab_line
+    EXPORTING
+      i_node_key     = node_key
+    IMPORTING
+      e_outtab_line  = gs_out
+      e_node_text    = l_value
+      et_item_layout = l_layi
+      es_node_layout = l_layn
+    EXCEPTIONS
+      node_not_found = 1
+      OTHERS         = 2.
+    IF sy-subrc = 0.
+      IF gs_out-tcode IS NOT INITIAL.
+        CALL TRANSACTION gs_out-tcode. "AND SKIP FIRST SCREEN.
+        EXIT.
+      ENDIF.
+
+      IF gs_out-pgmna IS NOT INITIAL.
+        SUBMIT (gs_out-pgmna) AND RETURN.
+        EXIT.
+      ENDIF.
+
+      IF gs_out-viewname IS NOT INITIAL.
+
+        CALL FUNCTION 'RS_TABLE_LIST_CREATE'
+        EXPORTING
+          action            = 'ANLE'
+          table_name        = gs_out-viewname
+          generation_forced = ' '.
+
+        EXIT.
+      ENDIF.
+
+      IF gs_out-tabname IS NOT INITIAL.
+        SUBMIT zjt_tab_show_single WITH p_tname = gs_out-tabname AND RETURN.
+        EXIT.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.                    "handle_node_double_click
+
+  METHOD handle_item_double_click.
+    DATA: l_value TYPE lvc_value,
+          l_layi  TYPE lvc_t_layi,
+          l_layn  TYPE lvc_s_layn.
+
+    CALL METHOD g_alv_tree->get_outtab_line
+    EXPORTING
+      i_node_key     = node_key
+    IMPORTING
+      e_outtab_line  = gs_out
+      e_node_text    = l_value
+      et_item_layout = l_layi
+      es_node_layout = l_layn
+    EXCEPTIONS
+      node_not_found = 1
+      OTHERS         = 2.
+    IF sy-subrc = 0.
+      IF gs_out-tcode IS NOT INITIAL.
+        CALL TRANSACTION gs_out-tcode. "AND SKIP FIRST SCREEN.
+        EXIT.
+      ENDIF.
+
+      IF gs_out-pgmna IS NOT INITIAL.
+        SUBMIT (gs_out-pgmna) AND RETURN.
+        EXIT.
+      ENDIF.
+
+      IF gs_out-viewname IS NOT INITIAL.
+        CALL FUNCTION 'RS_TABLE_LIST_CREATE'
+        EXPORTING
+          action            = 'ANLE'
+          table_name        = gs_out-viewname
+          generation_forced = ' '.
+        EXIT.
+      ENDIF.
+
+      IF gs_out-tabname IS NOT INITIAL.
+        SUBMIT zjt_tab_show_single WITH p_tname = gs_out-tabname AND RETURN.
+        EXIT.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.                    "handle_item_double_click
+
+ENDCLASS.                    "LCL_TREE_EVENT_RECEIVER IMPLEMENTATION
+*&---------------------------------------------------------------------*
+*&      Form  REGISTER_EVENTS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM register_events .
+  DATA:
+        lt_events        TYPE cntl_simple_events,
+        l_event          TYPE cntl_simple_event,
+        l_event_receiver TYPE REF TO lcl_tree_event_receiver.
+
+  CALL METHOD g_alv_tree->get_registered_events
+  IMPORTING
+    EVENTS = lt_events.
+
+  l_event-eventid = cl_gui_column_tree=>eventid_node_double_click.    "cl_gui_column_tree
+
+  APPEND l_event TO lt_events.
+
+  l_event-eventid = cl_gui_column_tree=>eventid_item_double_click.
+
+  APPEND l_event TO lt_events.
+
+  l_event-eventid = cl_gui_column_tree=>eventid_link_click.
+
+  APPEND l_event TO lt_events.
+
+  l_event-eventid = cl_gui_column_tree=>eventid_header_click.
+
+  APPEND l_event TO lt_events.
+
+  CALL METHOD g_alv_tree->set_registered_events
+  EXPORTING
+    EVENTS                    = lt_events
+  EXCEPTIONS
+    cntl_error                = 1
+    cntl_system_error         = 2
+    illegal_event_combination = 3.
+  IF sy-subrc <> 0.
+    MESSAGE x208(00) WITH 'ERROR'.
+  ENDIF.
+
+  CREATE object g_application.
+
+  SET HANDLER g_application->handle_node_double_click FOR g_alv_tree.
+  SET HANDLER g_application->handle_item_double_click FOR g_alv_tree.
+  SET HANDLER g_application->handle_link_click FOR g_alv_tree.
+  SET HANDLER g_application->handle_header_click FOR g_alv_tree.
+ENDFORM.                    " REGISTER_EVENTS
+
+
+*&---------------------------------------------------------------------*
+* 逻辑实现部分
+*
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Form frm_pre_fieldcat
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM frm_pre_fieldcat .
+  CLEAR gs_fieldcat.
+  REFRESH gt_fieldcat.
+
+  "动态字段名称赋值
+  DATA: lo_tabdescr TYPE REF TO cl_abap_structdescr.
+  DATA: ls_field_in TYPE dfies,
+        lt_dfies    TYPE ddfields.
+
+  lo_tabdescr ?= cl_abap_structdescr=>describe_by_data( gs_out ).
+  CALL METHOD cl_salv_data_descr=>read_structdescr
+  EXPORTING
+    r_structdescr = lo_tabdescr
+    receiving
+    t_dfies       = lt_dfies.
+
+  "===自动赋值fieldcat===
+  LOOP AT lt_dfies INTO ls_field_in.
+    CLEAR: gs_fieldcat.
+    MOVE-corresponding ls_field_in TO gs_fieldcat.
+    gs_fieldcat-ref_table = ls_field_in-reftable. "参照类型的表,搜索帮助，域控制
+    gs_fieldcat-ref_field = ls_field_in-reffield. "参照类型字段
+
+    IF gs_fieldcat-coltext IS INITIAL.            "当COLTEXT不存在显示FILEDTEXT，如字段没域，只有手工描述的情况
+      gs_fieldcat-coltext = ls_field_in-fieldtext.
+    ENDIF.
+    CASE ls_field_in-fieldname.
+    WHEN 'MANDT' OR 'SEL'.
+      CONTINUE.
+    WHEN 'NODE'.
+      gs_fieldcat-coltext = '序号'.
+      gs_fieldcat-outputlen = '14'.
+      "gs_fieldcat-tech = 'X'.
+    WHEN 'NODE_PER'.
+      gs_fieldcat-tech = 'X'.
+    WHEN 'DDTEXT'.
+      gs_fieldcat-outputlen = '20'.
+      gs_fieldcat-tech = 'X'.
+    WHEN 'SOURCE'.
+      gs_fieldcat-outputlen = '12'.
+    WHEN 'BROBJ'.
+      gs_fieldcat-outputlen = '20'.
+    WHEN OTHERS.
+    ENDCASE.
+    APPEND gs_fieldcat TO gt_fieldcat.
+  ENDLOOP.
+
+  "其他特殊处理
+  LOOP AT gt_fieldcat INTO gs_fieldcat.
+    gs_fieldcat-HOTSPOT = 'X'.
+
+    MODIFY gt_fieldcat FROM gs_fieldcat.
+  ENDLOOP.
+
+
+  DEFINE set_sort.  "定义排序宏
+    CLEAR gs_sort.
+    gs_sort-fieldname = &1.
+    gs_sort-spos = 1.
+    gs_sort-UP = 'X'.
+    gs_sort-subtot = 'X'.
+    APPEND gs_sort TO gt_sort.
+  END-OF-DEFINITION.
+*  SET_SORT 'GJAHR'.
+*  SET_SORT 'SEASON'.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Module STATUS_0100 OUTPUT
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  SET pf-status 'STATUS'.
+  SET TITLEBAR 'TITLE'.
+
+  IF g_alv_tree IS INITIAL.
+    PERFORM frm_init_tree.
+  ENDIF.
+
+  PERFORM register_events.
+*  CALL METHOD cl_gui_cfw=>flush.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+
+  DATA: lv_sfield TYPE SCREEN-name,     "屏幕字段
+        lv_line   TYPE I.
+
+  CASE sy-ucomm.
+  WHEN '&F03' OR '&F05' OR '&F12'.
+    CALL METHOD g_alv_tree->free.
+    LEAVE PROGRAM.
+  ENDCASE.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*& Form frm_init_tree
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM frm_init_tree .
+
+  CREATE object g_customer_container
+    EXPORTING
+      container_name = 'CUS_CON'.
+
+  CREATE object g_alv_tree
+    EXPORTING
+      parent              = g_customer_container
+      node_selection_mode = cl_gui_column_tree=>node_sel_mode_single
+      item_selection      = 'X'
+      no_html_header      = 'X'.
+
+  DATA: g_tree_header TYPE treev_hhdr.
+        g_tree_header-heading = '自定义菜单'.
+        g_tree_header-tooltip = '自定义菜单'.
+        g_tree_header-width   = 40.
+
+  PERFORM frm_pre_fieldcat.   "设置字段
+
+  CALL METHOD g_alv_tree->set_table_for_first_display
+  EXPORTING
+    i_structure_name    = 'GS_OUT'
+    is_hierarchy_header = g_tree_header
+  CHANGING
+    it_fieldcatalog     = gt_fieldcat
+    it_outtab           = gt_tab.
+
+  PERFORM frm_create_treedata.
+
+  CALL METHOD g_alv_tree->frontend_update.
+*
+  CALL METHOD g_alv_tree->expand_nodes "展开节点
+  EXPORTING
+    it_node_key = gt_nkey[]. "次末节点的NODE_KEY
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form frm_create_treedata
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM frm_create_treedata .
+  DATA: moff TYPE i.
+  CLEAR:gt_out.
+  SELECT *
+    INTO corresponding FIELDS OF TABLE gt_out
+    FROM zjt_tab_show.
+  SORT gt_out BY node.
+
+  "计算上层节点
+  LOOP AT gt_out ASSIGNING <fs_out>.
+    FIND ALL OCCURRENCES OF '.' IN <fs_out>-node match offset moff.
+    IF sy-subrc = 0.
+      <fs_out>-node_per = <fs_out>-node+0(moff).
+    ELSE.
+      <fs_out>-node_per = 'MAIN'.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT gt_out INTO gs_out WHERE node_per = 'MAIN'.
+    PERFORM add_node USING gs_out ''.
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form add_proj
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> LV_NOTETEXT
+*&      --> LV_NODE_KEY
+*&      <-- LV_NODE_LAST
+*&---------------------------------------------------------------------*
+FORM add_node  USING    p_out LIKE gs_out
+      p_node_key TYPE lvc_nkey.
+
+  DATA: lv_node TYPE lvc_nkey.
+  DATA: lv_node_text TYPE lvc_value.
+  DATA: lv_index TYPE i.
+  lv_node_text = p_out-ddtext.
+
+  CALL METHOD g_alv_tree->add_node
+  EXPORTING
+    i_relat_node_key     = p_node_key
+    i_relationship       = cl_gui_column_tree=>relat_last_child
+    is_outtab_line       = gs_out
+*     IS_NODE_LAYOUT       =
+*     IT_ITEM_LAYOUT       =
+    i_node_text          = lv_node_text
+  IMPORTING
+    e_new_node_key       = lv_node
+  EXCEPTIONS
+    relat_node_not_found = 1
+    node_not_found       = 2
+    OTHERS               = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    APPEND lv_node TO gt_nkey.
+  ENDIF.
+
+  LOOP AT gt_out INTO gs_out WHERE node_per = p_out-node.
+    PERFORM add_node USING gs_out
+          lv_node.
+  ENDLOOP.
+  IF sy-subrc <> 0.
+    lv_index = LINES( gt_nkey[] ).
+    DELETE gt_nkey[] INDEX lv_index.
+  ENDIF.
+
+ENDFORM.
