@@ -1,0 +1,26 @@
+FUNCTION zfunc_save.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(I_HEAD) LIKE  ZFUNC_LOG STRUCTURE  ZFUNC_LOG OPTIONAL
+*"  TABLES
+*"      T_DATA STRUCTURE  ZFUNC_LOG_DATA OPTIONAL
+*"      T_DATA_E STRUCTURE  ZFUNC_LOG_DATA_E OPTIONAL
+*"----------------------------------------------------------------------
+
+  IF i_head IS NOT INITIAL.
+    MODIFY zfunc_log FROM i_head.
+    COMMIT WORK AND WAIT.
+  ENDIF.
+
+  IF t_data[] IS NOT INITIAL.
+    MODIFY zfunc_log_data FROM TABLE t_data.
+    COMMIT WORK AND WAIT.
+  ENDIF.
+
+  IF t_data_e[] IS NOT INITIAL.
+    MODIFY zfunc_log_data_e FROM TABLE t_data_e.
+    COMMIT WORK AND WAIT.
+  ENDIF.
+
+ENDFUNCTION.
