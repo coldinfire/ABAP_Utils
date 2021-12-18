@@ -1,0 +1,73 @@
+FUNCTION zfunc_update_statu.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(I_ID) TYPE  ZFUNC_LOG_ID
+*"     VALUE(I_MSGTY) TYPE  BAPI_MTYPE
+*"     VALUE(I_MSGTXT) TYPE  BAPI_MSG
+*"     VALUE(I_USER1) TYPE  CHAR50 OPTIONAL
+*"     VALUE(I_USER2) TYPE  CHAR50 OPTIONAL
+*"     VALUE(I_USER3) TYPE  CHAR50 OPTIONAL
+*"----------------------------------------------------------------------
+
+  DATA: ls_log TYPE zfunc_log.
+  DATA: lv_d_beg   TYPE dats,
+        lv_t_beg   TYPE tims,
+        lv_d_end   TYPE dats,
+        lv_t_end   TYPE tims,
+        lv_seconds TYPE int4.
+
+  CLEAR: ls_log,lv_d_beg,lv_t_beg,lv_d_end,lv_t_end,lv_seconds.
+
+  DO 3 TIMES.
+    SELECT SINGLE  *
+      INTO CORRESPONDING FIELDS OF ls_log
+      FROM zfunc_log
+     WHERE id = i_id.
+    IF ls_log IS INITIAL.
+      WAIT UP TO 1 SECONDS.
+    ELSE.
+      EXIT.
+    ENDIF.
+  ENDDO.
+
+  GET TIME STAMP FIELD ls_log-tzntstmps_end . " 获取当前时间戳
+
+  IF ls_log-tzntstmps_beg IS INITIAL.
+    ls_log-tzntstmps_beg = ls_log-tzntstmps_end.
+  ENDIF.
+
+  CONVERT TIME STAMP ls_log-tzntstmps_beg TIME ZONE sy-zonlo INTO DATE lv_d_beg TIME lv_t_beg.
+  CONVERT TIME STAMP ls_log-tzntstmps_end TIME ZONE sy-zonlo INTO DATE lv_d_end TIME lv_t_end.
+
+  "计算BAPI执行时间差
+  CALL FUNCTION 'SALP_SM_CALC_TIME_DIFFERENCE'
+    EXPORTING
+      date_1  = lv_d_end
+      time_1  = lv_t_end
+      date_2  = lv_d_beg
+      time_2  = lv_t_beg
+    IMPORTING
+      seconds = lv_seconds.
+
+  ls_log-tzntstmps = lv_seconds.
+  ls_log-msgty = i_msgty.
+  ls_log-msgtxt = i_msgtxt.
+  ls_log-user1 = i_user1.
+  ls_log-user2 = i_user2.
+  ls_log-user3 = i_user3.
+
+  UPDATE zfunc_log
+  SET tzntstmps = ls_log-tzntstmps
+      tzntstmps_end = ls_log-tzntstmps_end
+      msgty = ls_log-msgty
+      msgtxt = ls_log-msgtxt
+      user1 = ls_log-user1
+      user2 = ls_log-user2
+      user3 = ls_log-user3
+  WHERE id = i_id.
+
+  COMMIT WORK AND WAIT.
+
+  CLEAR :i_id,i_msgty,i_msgtxt,i_user1,i_user2,i_user3,lv_seconds.
+ENDFUNCTION.
