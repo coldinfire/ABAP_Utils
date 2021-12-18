@@ -1,0 +1,948 @@
+*************************************************************************************************
+*&  PROGRAMMING HEADER INFORMATION                                                              *
+*&----------------------------------------------------------------------------------------------*
+
+REPORT  zwsr_log.
+
+INCLUDE zbc_incl_alv.
+INCLUDE zbc_incl_alvevt.
+
+TYPE-POOLS:abap.
+TABLES:zfunc_log,tftit,zws_frame_head.
+
+TYPES: BEGIN OF ty_s_out.
+        INCLUDE STRUCTURE zfunc_log.
+TYPES: traceid TYPE zws_frame_head-traceid,
+       spanid TYPE zws_frame_head-spanid,
+       cdate  TYPE zws_frame_head-cdate,
+       ctime  TYPE zws_frame_head-ctime,
+       userid TYPE zws_frame_head-userid,
+       username TYPE zws_frame_head-username,
+       area TYPE zws_frame_head-area,
+       type TYPE zws_frame_head-type,
+       message TYPE zws_frame_head-message,
+       return_type TYPE zws_frame_head-type,
+       return_msg TYPE zws_frame_head-message.
+TYPES: time_begin TYPE char20,
+       time_end   TYPE char20.
+TYPES: canum      TYPE zfunc_log_data-canum,
+       func_parameter TYPE zfunc_log_data-func_parameter,
+       func_structure TYPE zfunc_log_data-func_structure,
+       json_data      TYPE zfunc_log_data-json_data,
+       stext          TYPE tftit-stext,
+       param_type(20),
+       icon           TYPE char25.
+TYPES: END OF ty_s_out.
+TYPES: ty_t_out TYPE TABLE OF ty_s_out.
+DATA: gt_out TYPE ty_t_out.
+DATA: gs_out TYPE ty_s_out.
+DATA: gt_wm_return TYPE TABLE OF zws_frame_return WITH HEADER LINE.
+FIELD-SYMBOLS: <fs_out> TYPE ty_s_out.
+*明细
+DATA:BEGIN OF gs_data,
+  canum          TYPE zfunc_log_data-canum,
+  func_parameter TYPE zfunc_log_data-func_parameter,
+  func_paramtype TYPE zfunc_log_data-func_paramtype,
+  func_structure TYPE zfunc_log_data-func_structure,
+  json_data      TYPE string,
+  param_type(20),
+  stext          TYPE paramtext,
+END OF gs_data.
+DATA: gt_data LIKE TABLE OF gs_data.
+DATA: gt_data_rst LIKE TABLE OF gs_data.
+
+DATA: gr_alv TYPE REF TO cl_gui_alv_grid.
+*DATA: GR_CON TYPE REF TO CL_GUI_CONTAINER.
+DATA: gr_con TYPE REF TO cl_gui_docking_container.
+
+"Red Green Color
+CONSTANTS: c_green  TYPE icon-id VALUE '@08@',
+           c_yellow TYPE icon-id VALUE '@09@',
+           c_red    TYPE icon-id VALUE '@0A@'.
+
+SELECTION-SCREEN BEGIN OF BLOCK bk01 WITH FRAME TITLE text-001.
+SELECT-OPTIONS:
+s_func  FOR tftit-funcname VISIBLE LENGTH 50,
+s_id    FOR zfunc_log-id,
+s_trace FOR zws_frame_head-traceid,
+s_span  FOR zws_frame_head-spanid,
+s_area  FOR zws_frame_head-area,
+s_uid   FOR zws_frame_head-userid,
+s_ernam FOR zws_frame_head-username,
+s_erdat FOR zws_frame_head-cdate DEFAULT sy-datum,
+s_erzet FOR zws_frame_head-ctime,
+s_msgty FOR zfunc_log-msgty,
+s_msgtxt FOR zfunc_log-msgtxt.
+*s_user1  FOR zfunc_log-user1.
+SELECTION-SCREEN END OF BLOCK bk01.
+
+SELECTION-SCREEN BEGIN OF BLOCK bk02 WITH FRAME TITLE text-002.
+PARAMETER p_error AS CHECKBOX.
+SELECTION-SCREEN END OF BLOCK bk02.
+
+INITIALIZATION.
+
+AT SELECTION-SCREEN.
+
+START-OF-SELECTION.
+
+  PERFORM frm_get_data.
+
+END-OF-SELECTION.
+
+  PERFORM frm_display_data.
+
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_GET_DATA
+*&---------------------------------------------------------------------*
+*       TEXT
+*----------------------------------------------------------------------*
+*  -->  P1        TEXT
+*  <--  P2        TEXT
+*----------------------------------------------------------------------*
+FORM frm_get_data .
+  DATA: lv_datlo LIKE  sy-datlo,
+        lv_timlo LIKE  sy-timlo.
+
+  CLEAR gt_out.
+  "Get SAP Log Data"
+  SELECT * INTO CORRESPONDING FIELDS OF TABLE gt_out
+    FROM zws_frame_head AS head INNER JOIN zfunc_log ON head~func_log_id = zfunc_log~id
+         LEFT JOIN tftit ON zfunc_log~func_name = tftit~funcname AND spras = sy-langu
+   WHERE traceid IN s_trace
+     AND spanid IN s_span
+     AND func_name IN s_func
+     AND id  IN s_id
+     AND cdate IN s_erdat
+     AND ctime IN s_erzet
+     AND userid IN s_uid
+     AND username IN s_ernam
+     AND msgty IN s_msgty
+     AND msgtxt IN s_msgtxt
+     .
+  "Get WM Response Message"
+  IF gt_out IS NOT INITIAL.
+    CLEAR gt_wm_return.
+    SELECT * INTO CORRESPONDING FIELDS OF TABLE gt_wm_return
+      FROM zws_frame_return
+      FOR ALL ENTRIES IN gt_out
+      WHERE func_log_id = gt_out-id.
+    SORT gt_wm_return BY func_log_id.
+  ENDIF.
+
+  SORT gt_out BY cdate DESCENDING ctime DESCENDING.
+
+  LOOP AT gt_out ASSIGNING <fs_out>.
+    IF <fs_out>-tzntstmps_beg IS NOT INITIAL.
+      CLEAR: lv_datlo,lv_timlo.
+      CALL FUNCTION 'IB_CONVERT_FROM_TIMESTAMP'
+        EXPORTING
+          i_timestamp = <fs_out>-tzntstmps_beg
+          i_tzone     = sy-zonlo
+        IMPORTING
+          e_datlo     = lv_datlo
+          e_timlo     = lv_timlo.
+
+      CONCATENATE lv_datlo '-' lv_timlo INTO <fs_out>-time_begin.
+    ENDIF.
+
+    IF <fs_out>-tzntstmps_end IS NOT INITIAL.
+      CLEAR: lv_datlo,lv_timlo.
+      CALL FUNCTION 'IB_CONVERT_FROM_TIMESTAMP'
+        EXPORTING
+          i_timestamp = <fs_out>-tzntstmps_end
+          i_tzone     = sy-zonlo
+        IMPORTING
+          e_datlo     = lv_datlo
+          e_timlo     = lv_timlo.
+
+      CONCATENATE lv_datlo '-' lv_timlo INTO <fs_out>-time_end.
+    ENDIF.
+
+    IF <fs_out>-type EQ 'S'.
+      <fs_out>-type = <fs_out>-msgty.
+      <fs_out>-message = <fs_out>-msgtxt.
+    ENDIF.
+
+    READ TABLE gt_wm_return WITH KEY func_log_id = <fs_out>-id BINARY SEARCH.
+    IF sy-subrc = 0.
+      <fs_out>-return_type = gt_wm_return-type.
+      <fs_out>-return_msg  = gt_wm_return-message.
+    ENDIF.
+
+    IF <fs_out>-type EQ 'E' OR <fs_out>-return_type EQ 'E'.
+      <fs_out>-icon = c_red.
+    ELSE.
+      <fs_out>-icon = c_green.
+    ENDIF.
+
+  ENDLOOP.
+
+  IF p_error EQ 'X'.
+    DELETE gt_out WHERE icon = c_green.
+  ENDIF.
+
+  IF gt_out IS INITIAL.
+    MESSAGE 'According to the input conditions, no results are found.' TYPE 'S' DISPLAY LIKE 'E'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+ENDFORM.                    "frm_get_data
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_DISPLAY_DATA
+*&---------------------------------------------------------------------*
+*       TEXT
+*----------------------------------------------------------------------*
+*  -->  P1        TEXT
+*  <--  P2        TEXT
+*----------------------------------------------------------------------*
+FORM frm_display_data .
+* VARIABLES FOR ALV
+  DATA: ls_vari TYPE disvariant, "VARIANT"
+        ls_layo TYPE lvc_s_layo,
+        lt_fcat TYPE lvc_t_fcat,
+        lt_evts TYPE lvc_t_evts.
+* VARIANT
+  ls_vari-report = sy-repid.
+* LAYOUT
+  ls_layo-cwidth_opt = 'X'.
+  ls_layo-zebra      = 'X'.
+  "LS_LAYO-BOX_FNAME = 'SEL'."
+* FIELD CATALOG TABLE
+  PERFORM frm_add_field USING:
+        lt_fcat 'ICON'         'Status',
+        lt_fcat 'TRACEID'      'Trace ID',
+        lt_fcat 'SPANID'       'Span ID',
+        lt_fcat 'ID'           'Log ID',
+        lt_fcat 'FUNC_NAME'    'Function',
+        lt_fcat 'STEXT '       'Function Desc',
+        lt_fcat 'XUTERMINAL'   'Terminal',
+*        lt_fcat 'IP '          'IP',
+        lt_fcat 'CDATE'        'Create Date',
+        lt_fcat 'CTIME'        'Create Time',
+        lt_fcat 'USERID'       'User ID',
+        lt_fcat 'USERNAME'     'User Name',
+        lt_fcat 'AREA'         'Site',
+        lt_fcat 'TYPE'         'Msg Type',
+        lt_fcat 'MESSAGE'      'Message',
+        lt_fcat 'RETURN_TYPE'  'WM Msg Type',
+        lt_fcat 'RETURN_MSG'   'WM Message',
+        lt_fcat 'TIME_BEGIN'   'Begin Time',
+        lt_fcat 'TIME_END'     'End Time',
+        lt_fcat 'TZNTSTMPS'    'Run(S)',
+        lt_fcat 'USER1' 'User Para1',
+        lt_fcat 'USER2' 'User Para2',
+        lt_fcat 'USER3' 'User Para3'.
+
+* COMPLETE FIELD CATALOG TABLE
+  DATA: ls_out TYPE ty_s_out.
+  PERFORM frm_complete_fcat USING ls_out CHANGING lt_fcat.
+
+* SHOW ALV
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+      i_callback_program       = sy-repid
+      i_callback_user_command  = 'FRM_USER_COMMAND'
+      i_save                   = 'A'
+      i_callback_pf_status_set = 'FRM_PF_STATUS_SET'
+      is_variant               = ls_vari
+      is_layout_lvc            = ls_layo
+      it_fieldcat_lvc          = lt_fcat
+      it_events                = lt_evts
+    TABLES
+      t_outtab                 = gt_out
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+ENDFORM.                    "frm_display_data
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_ADD_FIELD
+*&---------------------------------------------------------------------*
+*       Add FIELD CATALOG Fields
+*----------------------------------------------------------------------*
+*  -->  IT_FCAT       Field Catalog
+*  -->  I_FIELDNAME   Field Name
+*  -->  I_REPTEXT     Title
+*----------------------------------------------------------------------*
+FORM frm_add_field USING it_fcat TYPE lvc_t_fcat
+      i_fieldname TYPE clike
+      i_reptext TYPE clike.
+  DATA: ls_fcat TYPE lvc_s_fcat.
+  ls_fcat-fieldname = i_fieldname.
+  ls_fcat-ref_field = i_fieldname.
+  ls_fcat-reptext   = i_reptext.   "Title"
+  ls_fcat-coltext   = i_reptext.   "Line Title"
+  ls_fcat-no_zero  = 'X'.
+* 特殊处理(仅改变显示样式,不应涉及逻辑)
+  CASE ls_fcat-fieldname.
+    WHEN 'ERNAM'.
+      ls_fcat-no_zero = ''.
+    WHEN OTHERS.
+  ENDCASE.
+
+  APPEND ls_fcat TO it_fcat.
+  CLEAR  ls_fcat.
+ENDFORM. " FRM_ADD_FIELD
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_PF_STATUS_SET
+*&---------------------------------------------------------------------*
+FORM frm_pf_status_set USING et_excl TYPE slis_t_extab.
+* 设置工具栏
+  DATA: lt_fcode TYPE STANDARD TABLE OF sy-ucomm.
+  CLEAR lt_fcode.
+  IF sy-tcode NS 'RST'.
+    APPEND 'RESEND' TO lt_fcode.
+  ENDIF.
+* 设置工具栏
+  SET PF-STATUS 'MAIN' EXCLUDING lt_fcode.
+* 设置标题栏
+* SET TITLEBAR 'MAIN' WITH L_TITLE.
+ENDFORM. "FRM_PF_STATUS_SET
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_USER_COMMAND
+*&---------------------------------------------------------------------*
+FORM frm_user_command USING i_ucomm TYPE sy-ucomm
+      is_selfield TYPE slis_selfield.
+* 0. Data can not be empty
+  CHECK gt_out[] IS NOT INITIAL.
+
+* 1. Check data change
+  PERFORM frm_check_changed_data.
+
+* 2. Excute Dobule Click Event
+  CASE i_ucomm.
+    WHEN '&IC1'.
+      CLEAR gs_out.
+      READ TABLE gt_out INTO gs_out INDEX is_selfield-tabindex.
+      PERFORM frm_display_data_mx USING gs_out-id.
+    WHEN 'RESEND'.
+      CLEAR gs_out.
+      READ TABLE gt_out INTO gs_out INDEX is_selfield-tabindex.
+      PERFORM frm_fm_resend USING gs_out-id.
+  ENDCASE.
+
+  is_selfield-refresh = 'X'.
+ENDFORM. "FRM_USER_COMMAND
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_DIS_POPU
+*&---------------------------------------------------------------------*
+*       TEXT
+*----------------------------------------------------------------------*
+*      -->P_LS_OUT_JSON_DATA  TEXT
+*----------------------------------------------------------------------*
+FORM frm_dis_popu USING p_json_data.
+
+  DATA: lv_xstring  TYPE xstring,
+        lt_text_tab TYPE TABLE OF tline,
+        ls_text_tab TYPE tline.
+  DATA:lv_string TYPE string.
+  lv_string = p_json_data.
+  DATA: BEGIN OF lt_text OCCURS 0,
+    line(255),
+  END OF lt_text.
+  CALL FUNCTION 'CONVERT_STRING_TO_TABLE'
+    EXPORTING
+      i_string         = lv_string
+      i_tabline_length = 60
+    TABLES
+      et_table         = lt_text.
+  LOOP AT lt_text.
+    ls_text_tab-tdline  = lt_text-line.
+    APPEND: ls_text_tab TO lt_text_tab.
+  ENDLOOP.
+
+  CALL FUNCTION 'COPO_POPUP_TO_DISPLAY_TEXTLIST'
+    EXPORTING
+*     TASK       = 'DISPLAY'
+      titel      = 'Content'
+*   IMPORTING
+*   FUNCTION   =
+    TABLES
+      text_table = lt_text_tab.
+ENDFORM.                    "frm_dis_popu
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_CHANGE_JSON
+*&---------------------------------------------------------------------*
+*       TEXT
+*----------------------------------------------------------------------*
+*      -->P_LS_OUT_JSON_DATA  TEXT
+*      <--P_BJ  TEXT
+*----------------------------------------------------------------------*
+FORM frm_change_json USING p_json_data p_name.
+
+  DATA: dyn_table TYPE REF TO data.
+  DATA: dyn_wa TYPE REF TO data.
+  FIELD-SYMBOLS: <dyn_table> TYPE table,
+                 <dyn_wa>    TYPE ANY.
+  DATA: l_tabname TYPE tabname.
+  DATA: ls_dd40vv TYPE dd40vv.
+
+  DATA: json_string TYPE string.
+  DATA: lv_json     TYPE string.
+
+  CLEAR ls_dd40vv.
+  SELECT SINGLE * FROM dd40vv
+    INTO ls_dd40vv
+   WHERE typename = p_name
+     AND ddlanguage = sy-langu.
+* 判断表类型，如果是 Table Type 则使用 row type 为表结构
+  IF ls_dd40vv IS NOT INITIAL.
+    l_tabname = ls_dd40vv-rowtype.
+  ELSE.
+    l_tabname = p_name.
+  ENDIF.
+* 创建动态表结构
+  CREATE DATA dyn_table TYPE TABLE OF (l_tabname).
+* 创建动态内表
+  ASSIGN dyn_table->* TO <dyn_table>.
+* 创建动态工作区结构
+  CREATE DATA dyn_wa LIKE LINE OF <dyn_table>.
+* 创建动态工作区
+  ASSIGN dyn_wa->* TO <dyn_wa>.
+* JSON 字符串反序列化
+  CLEAR lv_json.
+  lv_json = p_json_data.
+  zui2_json=>deserialize( EXPORTING json = lv_json
+    pretty_name = zui2_json=>pretty_mode-camel_case
+  CHANGING data = <dyn_table> ).
+* 动态生成 ALV
+  IF sy-subrc = 0 AND <dyn_table> IS NOT INITIAL.
+    DATA: ls_layo TYPE lvc_s_layo.
+    DATA: lt_fcat TYPE lvc_t_fcat, "FIELD CATALOG TABLE
+          ls_fcat TYPE lvc_s_fcat.
+    DATA: lt_table LIKE TABLE OF dntab.
+    DATA: ls_table TYPE dntab.
+
+    CLEAR ls_layo.
+    ls_layo-cwidth_opt = 'X'.
+    ls_layo-zebra      = 'X'.
+    " 取出表结构的字段目录
+    CALL FUNCTION 'NAMETAB_GET'
+      EXPORTING
+        langu          = sy-langu
+        tabname        = l_tabname
+      TABLES
+        nametab        = lt_table
+      EXCEPTIONS
+        no_texts_found = 1.
+    LOOP AT lt_table INTO ls_table.
+      ls_fcat-fieldname = ls_table-fieldname.
+      ls_fcat-ref_table = l_tabname.
+      ls_fcat-ref_field = ls_table-fieldname.
+      ls_fcat-reptext   = ls_table-fieldtext.   "标题
+      ls_fcat-coltext   = ls_table-fieldtext.   "列标题
+      APPEND ls_fcat TO lt_fcat.
+      CLEAR ls_fcat.
+    ENDLOOP.
+
+    CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+      EXPORTING        "I_STRUCTURE_NAME = L_TABNAME
+        is_layout_lvc         = ls_layo
+        i_screen_start_column = 5
+        i_screen_start_line   = 5
+        i_screen_end_column   = 140
+        i_screen_end_line     = 20
+        it_fieldcat_lvc       = lt_fcat
+      TABLES
+        t_outtab              = <dyn_table>
+      EXCEPTIONS
+        program_error         = 1
+        OTHERS                = 2.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+      WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    "frm_change_json
+*&---------------------------------------------------------------------*
+*&      FORM  FRM_DISPLAY_DATA_MX
+*&---------------------------------------------------------------------*
+*       TEXT
+*----------------------------------------------------------------------*
+*  -->  P1        TEXT
+*  <--  P2        TEXT
+*----------------------------------------------------------------------*
+FORM frm_display_data_mx USING p_id .
+* CHECK AND CREATE CONTAINER
+  IF gr_con IS INITIAL.
+    "CREATE DOCKING CONTAINER
+    CREATE OBJECT gr_con
+      EXPORTING
+        parent = cl_gui_container=>screen0
+        ratio  = 40
+        side   = cl_gui_docking_container=>dock_at_bottom.
+  ENDIF.
+* CHECK AND CREATE ALV
+  IF gr_alv IS NOT INITIAL.
+    "DESTRUCTOR ALV
+    CALL METHOD gr_alv->free
+      EXCEPTIONS
+        cntl_error        = 1
+        cntl_system_error = 2
+        OTHERS            = 3.
+    FREE: gr_alv.
+  ENDIF.
+
+  CREATE OBJECT gr_alv
+    EXPORTING
+      i_parent = gr_con.
+* SET HANDLER
+  DATA: lr_hdl TYPE REF TO lcl_event_handler.
+  CREATE OBJECT lr_hdl.
+  SET HANDLER lr_hdl->double_click FOR gr_alv.
+  SET HANDLER lr_hdl->toolbar      FOR gr_alv.
+  SET HANDLER lr_hdl->user_command FOR gr_alv.
+  SET HANDLER lr_hdl->data_changed_finished FOR gr_alv.
+* REGISTER EVENTS
+  CALL METHOD gr_alv->set_ready_for_input
+    EXPORTING
+      i_ready_for_input = 1.
+  CALL METHOD gr_alv->register_edit_event
+    EXPORTING
+      i_event_id = cl_gui_alv_grid=>mc_evt_enter.
+  CALL METHOD gr_alv->register_edit_event
+    EXPORTING
+      i_event_id = cl_gui_alv_grid=>mc_evt_modified.
+* GET FILTER
+  DATA:er_alv TYPE REF TO cl_gui_alv_grid.
+  CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+    IMPORTING
+      e_grid = er_alv.
+  DATA: lt_entries TYPE lvc_t_fidx. "FILTER ITEMS
+  IF er_alv IS NOT INITIAL.
+    CALL METHOD er_alv->get_filtered_entries
+      IMPORTING
+        et_filtered_entries = lt_entries.
+  ENDIF.
+* VARIABLES FOR ALV
+  DATA: ls_vari1 TYPE disvariant,
+        ls_layo1 TYPE lvc_s_layo,
+        lt_fcat1 TYPE lvc_t_fcat,
+        lt_excl1 TYPE ui_functions. "EXCLUDED TOOLBAR STANDARD FUNCTIONS"
+* VARIANT
+  ls_vari1-report = sy-repid.
+*  LS_VARI1-HANDLE = G_CATALOG.
+* LAYOUT
+  ls_layo1-cwidth_opt = 'X'.     "优化列宽度
+  ls_layo1-zebra      = 'X'.
+  ls_layo1-no_rowins  = 'X'.     "不允许插入行
+  ls_layo1-no_rowmove = 'X'.     "不允许移动行
+*  LS_LAYO1-SMALLTITLE = 'X'.
+*  LS_LAYO1-GRID_TITLE = 'ALV Desc'.
+  ls_layo1-stylefname = 'CSTYL'. "单元格样式
+* FIELD CATALOG TABLE
+  PERFORM frm_add_field USING:
+        lt_fcat1  'PARAM_TYPE'           'I/O',
+        lt_fcat1  'CANUM'                'Item',
+        lt_fcat1  'FUNC_PARAMETER'       'Function Parameter',
+        lt_fcat1  'FUNC_PARAMTYPE'       'Type',
+        lt_fcat1  'STEXT'                'Paremeter Desc',
+        lt_fcat1  'FUNC_STRUCTURE'       'Reference',
+        lt_fcat1  'JSON_DATA '           'JSON Data'.
+* GET LOG DETAIL DATA
+  PERFORM  frm_log_detail USING p_id .
+  DELETE gt_data WHERE param_type EQ 'EXPORT' AND func_paramtype EQ 'I'.
+* ALV DISPLAY
+  CALL METHOD gr_alv->set_table_for_first_display
+    EXPORTING
+      is_variant           = ls_vari1
+      is_layout            = ls_layo1
+      i_save               = 'A'
+      i_buffer_active      = space
+      i_bypassing_buffer   = space
+      it_toolbar_excluding = lt_excl1
+    CHANGING
+      it_outtab            = gt_data
+      it_fieldcatalog      = lt_fcat1.
+ENDFORM.                    "frm_display_data_mx
+*&---------------------------------------------------------------------*
+*&      Form  frm_LOG_DETAIL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM frm_log_detail USING p_id.
+  DATA: lt_zfunc_log_data TYPE TABLE OF zfunc_log_data,
+        ls_zfunc_log_data TYPE zfunc_log_data.
+  DATA: lt_zfunc_log_data_e TYPE TABLE OF zfunc_log_data_e,
+        ls_zfunc_log_data_e TYPE zfunc_log_data_e.
+
+  DATA: lv_json_string TYPE string.
+  DATA: lv_func_name LIKE zfunc_log-func_name.
+  DATA: lv_func_parameter TYPE zfunc_log_data-func_parameter.
+  DATA: lv_func_paramtype TYPE zfunc_log_data-func_paramtype.
+  DATA: lv_func_structure TYPE zfunc_log_data-func_structure.
+
+  DATA: lt_funct LIKE STANDARD TABLE OF funct,
+        ls_funct LIKE funct.
+
+  SELECT SINGLE func_name INTO lv_func_name
+    FROM zfunc_log
+    WHERE id = p_id.
+
+  SELECT * INTO TABLE lt_funct
+    FROM funct
+   WHERE funcname = lv_func_name
+     AND spras = sy-langu.
+  SORT lt_funct BY parameter version DESCENDING.
+  DELETE ADJACENT DUPLICATES FROM lt_funct COMPARING parameter.
+
+  SELECT * INTO CORRESPONDING FIELDS OF TABLE lt_zfunc_log_data
+    FROM zfunc_log_data
+   WHERE id =  p_id.
+
+  SELECT * INTO CORRESPONDING FIELDS OF TABLE lt_zfunc_log_data_e
+    FROM zfunc_log_data_e
+   WHERE id =  p_id.
+
+  SORT lt_zfunc_log_data BY canum.
+  LOOP AT lt_zfunc_log_data INTO ls_zfunc_log_data.
+    CLEAR: ls_zfunc_log_data-canum.
+    MODIFY lt_zfunc_log_data FROM ls_zfunc_log_data.
+  ENDLOOP.
+
+  SORT lt_zfunc_log_data_e BY canum.
+  LOOP AT lt_zfunc_log_data_e INTO ls_zfunc_log_data_e.
+    CLEAR: ls_zfunc_log_data_e-canum.
+    MODIFY lt_zfunc_log_data_e FROM ls_zfunc_log_data_e.
+  ENDLOOP.
+
+  CLEAR:gt_data[].
+  DATA: lv_canum TYPE zfunc_log_data-canum.
+  lv_canum = 1.
+  LOOP AT lt_zfunc_log_data INTO ls_zfunc_log_data.
+*    lv_json_string = lv_json_string && ls_zfunc_log_data-json_data.
+    CONCATENATE lv_json_string ls_zfunc_log_data-json_data INTO lv_json_string.
+    lv_func_parameter = ls_zfunc_log_data-func_parameter.
+    lv_func_paramtype = ls_zfunc_log_data-func_paramtype.
+    lv_func_structure = ls_zfunc_log_data-func_structure.
+    AT END OF func_parameter.
+      CLEAR gs_data.
+      MOVE-CORRESPONDING ls_zfunc_log_data TO gs_data.
+      gs_data-canum = lv_canum.
+      gs_data-json_data = lv_json_string.
+      gs_data-func_parameter = lv_func_parameter.
+      gs_data-func_paramtype = lv_func_paramtype.
+      gs_data-func_structure = lv_func_structure.
+      gs_data-param_type = 'IMPORT'.
+
+      READ TABLE lt_funct INTO ls_funct WITH KEY parameter = lv_func_parameter BINARY SEARCH.
+      IF sy-subrc EQ 0.
+        gs_data-stext =  ls_funct-stext.
+      ENDIF.
+
+      APPEND gs_data TO gt_data.
+      lv_canum = lv_canum + 1.
+      CLEAR: lv_json_string,lv_func_parameter,lv_func_paramtype,lv_func_structure.
+    ENDAT.
+  ENDLOOP.
+
+  LOOP AT lt_zfunc_log_data_e INTO ls_zfunc_log_data_e.
+*    lv_json_string = lv_json_string && ls_zfunc_log_data_e-json_data.
+    CONCATENATE lv_json_string ls_zfunc_log_data_e-json_data INTO lv_json_string.
+    lv_func_parameter = ls_zfunc_log_data_e-func_parameter.
+    lv_func_paramtype = ls_zfunc_log_data_e-func_paramtype.
+    lv_func_structure = ls_zfunc_log_data_e-func_structure.
+    AT END OF func_parameter.
+      CLEAR gs_data.
+      MOVE-CORRESPONDING ls_zfunc_log_data_e TO gs_data.
+      gs_data-canum = lv_canum.
+      gs_data-json_data = lv_json_string.
+      gs_data-func_parameter = lv_func_parameter.
+      gs_data-func_paramtype = lv_func_paramtype.
+      gs_data-func_structure = lv_func_structure.
+      gs_data-param_type = 'EXPORT'.
+
+      READ TABLE lt_funct INTO ls_funct WITH KEY parameter = lv_func_parameter BINARY SEARCH.
+      IF sy-subrc EQ 0.
+        gs_data-stext =  ls_funct-stext.
+      ENDIF.
+
+      APPEND gs_data TO gt_data.
+      lv_canum = lv_canum + 1.
+      CLEAR: lv_json_string,lv_func_parameter,lv_func_paramtype,lv_func_structure.
+    ENDAT.
+  ENDLOOP.
+ENDFORM.                    "frm_LOG_DETAIL
+*&---------------------------------------------------------------------*
+*&      Form  frm_transdisplay_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->IM_DATA       text
+*      -->IM_JSON_DATA  text
+*----------------------------------------------------------------------*
+FORM frm_transdisplay_data USING im_data TYPE zfunc_log_data
+      im_json_data TYPE string.
+  DATA: lv_post_data TYPE string.
+
+  "动态创建工作区、内表
+  DATA           objekt     TYPE REF TO data.
+  FIELD-SYMBOLS  <fs_aber>  TYPE ANY.
+
+  IF im_data-func_type = 'X'.
+    CREATE DATA objekt TYPE (im_data-func_structure).
+    ASSIGN objekt->* TO <fs_aber>.
+  ELSE.
+    CREATE DATA objekt TYPE TABLE OF (im_data-func_structure).
+    ASSIGN objekt->* TO <fs_aber>.
+  ENDIF.
+
+  IF im_json_data IS NOT INITIAL.
+    lv_post_data = im_json_data.
+  ELSE.
+    lv_post_data = im_data-json_data.
+  ENDIF.
+*  /ui2/cl_json=>deserialize( EXPORTING json = lv_post_data
+*                             pretty_name = /ui2/cl_json=>pretty_mode-camel_case
+*  CHANGING data = <fs_aber> ).
+  zui2_json=>deserialize( EXPORTING json = lv_post_data
+    pretty_name = zui2_json=>pretty_mode-camel_case
+  CHANGING data = <fs_aber> ).
+  lv_post_data = im_data-func_parameter.
+*  cl_demo_output=>write_data( value = <fs_aber> name = lv_post_data ).
+ENDFORM.                    "frm_transdisplay_data
+
+*&---------------------------------------------------------------------*
+*&      Form  frm_alv_double_click
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->ROW        text
+*      -->COL        text
+*      -->ROID       text
+*----------------------------------------------------------------------*
+FORM frm_alv_double_click USING row TYPE lvc_s_row
+      col TYPE lvc_s_col
+      roid TYPE lvc_s_roid.
+  DATA:l_string TYPE string.
+  READ TABLE gt_data INTO gs_data INDEX row-index.
+*  IF col-fieldname = 'JSON_DATA'.
+  IF gs_data-json_data+0(1) = '[' OR gs_data-json_data+0(1) = '{'.
+    IF gs_data-json_data+0(1) = '['.
+      PERFORM frm_change_json USING gs_data-json_data gs_data-func_structure.
+    ELSEIF gs_data-json_data+0(1) = '{'.
+      CONCATENATE '[' gs_data-json_data ']' INTO l_string.
+      PERFORM frm_change_json USING l_string gs_data-func_structure.
+    ENDIF.
+  ELSE.
+    PERFORM frm_dis_popu USING gs_data-json_data.
+  ENDIF.
+ENDFORM.                    "frm_alv_double_click
+*&---------------------------------------------------------------------*
+*&      Form  FRM_FM_RESEND
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GS_OUT_ID  text
+*----------------------------------------------------------------------*
+FORM frm_fm_resend  USING p_id.
+
+  DATA: lv_func_name LIKE zfunc_log-func_name.
+  DATA: it_par TYPE abap_func_parmbind_tab.
+
+  DATA: lt_rsimp TYPE TABLE OF rsimp WITH HEADER LINE,
+        lt_rscha TYPE TABLE OF rscha WITH HEADER LINE,
+        lt_rsexp TYPE TABLE OF rsexp WITH HEADER LINE,
+        lt_rstbl TYPE TABLE OF rstbl WITH HEADER LINE,
+        lt_rsexc TYPE TABLE OF rsexc WITH HEADER LINE,
+        lt_rsfdo TYPE TABLE OF rsfdo WITH HEADER LINE,
+        lt_source TYPE TABLE OF rssource WITH HEADER LINE.
+
+  SELECT SINGLE func_name INTO lv_func_name
+    FROM zfunc_log
+   WHERE id = p_id.
+
+  CLEAR:lt_rsimp,lt_rscha,lt_rsexp,lt_rstbl,lt_rsexc,lt_rsfdo,lt_source.
+  REFRESH:lt_rsimp,lt_rscha,lt_rsexp,lt_rstbl,lt_rsexc,lt_rsfdo,lt_source.
+  CALL FUNCTION 'RPY_FUNCTIONMODULE_READ_NEW'
+    EXPORTING
+      functionname       = lv_func_name
+    TABLES
+      import_parameter   = lt_rsimp
+      changing_parameter = lt_rscha
+      export_parameter   = lt_rsexp
+      tables_parameter   = lt_rstbl
+      exception_list     = lt_rsexc
+      documentation      = lt_rsfdo
+      SOURCE             = lt_source.
+
+  "GET LOG DETAIL DATA
+  PERFORM  frm_log_detail USING p_id.
+  CLEAR gt_data_rst.
+  gt_data_rst = gt_data.
+  DELETE gt_data_rst WHERE param_type EQ 'EXPORT' AND func_paramtype EQ 'I'.
+
+  "Loop FM parameter get the not option parameter and set value
+  CLEAR it_par.
+  "Input Parameter
+  LOOP AT lt_rsimp.
+    PERFORM prepare_parameter_table USING lt_rsimp-parameter lt_rsimp-optional lt_rsimp-typ 'I'
+                                  CHANGING it_par.
+  ENDLOOP.
+  "Table Parameter
+  LOOP AT lt_rstbl.
+    PERFORM prepare_parameter_table USING lt_rstbl-parameter lt_rstbl-optional lt_rstbl-dbstruct 'T'
+                                  CHANGING it_par.
+  ENDLOOP.
+  "Call Function with parameter
+  CALL FUNCTION lv_func_name
+    PARAMETER-TABLE
+      it_par.
+
+ENDFORM.                    " FRM_FM_RESEND
+*&---------------------------------------------------------------------*
+*&      Form  PREPARE_PARAMETER_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_LT_RSIMP_PARAMETER  text
+*      -->P_LT_RSIMP_OPTIONAL  text
+*      -->P_LT_RSIMP_TYP  text
+*----------------------------------------------------------------------*
+FORM prepare_parameter_table  USING parameter optional ref typ
+                           CHANGING it_par TYPE abap_func_parmbind_tab.
+
+  DATA wa_par TYPE abap_func_parmbind.
+  DATA: lv_json_string TYPE string.
+  DATA: lv_data_type TYPE string.
+
+  DATA: l_tabname TYPE tabname,
+        ls_dd40vv TYPE dd40vv.
+
+  DATA: dyn_table TYPE REF TO data,
+        dyn_wa TYPE REF TO data,
+        dyn_value TYPE REF TO data.
+  FIELD-SYMBOLS: <dyn_table> TYPE ANY TABLE,
+                 <dyn_wa>    TYPE ANY,
+                 <dref>      TYPE ANY,
+                 <fval>      TYPE ANY.
+
+  DATA: lv_1 TYPE string,
+        lv_2 TYPE string,
+        lv_3 TYPE string,
+        lv_spanid TYPE string,
+        lv_name TYPE adrp-name_text.
+
+  "Log记录的Function Module请求参数处理"
+  READ TABLE gt_data_rst INTO gs_data WITH KEY func_parameter = parameter.
+  IF sy-subrc = 0.
+    CLEAR wa_par.
+    wa_par-name = parameter.              " Prarter Name
+    IF typ EQ 'T'.                        " Prarter Type
+      wa_par-kind = abap_func_tables.
+    ELSEIF typ EQ 'I'.
+      wa_par-kind = abap_func_exporting.
+    ELSEIF typ EQ 'E'.
+      wa_par-kind = abap_func_importing.
+    ENDIF.
+    " Parameter Value
+    " Paremeter:Structure OR Table
+    IF gs_data-json_data+0(1) = '[' OR gs_data-json_data+0(1) = '{'.
+      IF gs_data-json_data+0(1) = '['.
+        lv_json_string = gs_data-json_data.
+      ELSEIF gs_data-json_data+0(1) = '{'.
+        CONCATENATE '[' gs_data-json_data ']' INTO lv_json_string.
+      ENDIF.
+      CLEAR ls_dd40vv.
+      SELECT SINGLE * FROM dd40vv INTO ls_dd40vv
+       WHERE typename = ref
+         AND ddlanguage = sy-langu.
+      "判断表类型，如果是 Table Type 则使用 row type 为表结构
+      IF ls_dd40vv IS NOT INITIAL.
+        l_tabname = ls_dd40vv-rowtype.
+      ELSE.
+        l_tabname = ref.
+      ENDIF.
+      "创建动态表结构
+      CREATE DATA dyn_table TYPE TABLE OF (l_tabname).
+      "创建动态内表
+      ASSIGN dyn_table->* TO <dyn_table>.
+      "创建动态工作区结构
+      CREATE DATA dyn_wa LIKE LINE OF <dyn_table>.
+      "创建动态工作区
+      ASSIGN dyn_wa->* TO <dyn_wa>.
+      zui2_json=>deserialize( EXPORTING json = lv_json_string
+                                        pretty_name = zui2_json=>pretty_mode-camel_case
+                              CHANGING data = <dyn_table> ).
+      IF typ EQ 'T'. "如果是传入参数则取传入的值，非传入参数置空"
+        IF gs_data-param_type EQ 'IMPORT'.
+          GET REFERENCE OF <dyn_table> INTO wa_par-value.
+        ELSE.
+          REFRESH <dyn_table>.
+          GET REFERENCE OF <dyn_table> INTO wa_par-value.
+        ENDIF.
+      ELSEIF typ EQ 'I'."传入类型为结构:传入单条数据"
+        LOOP AT <dyn_table> INTO <dyn_wa>.
+          "更新Frame传入参数
+          IF parameter EQ 'I_FRAME_HEAD'.
+            ASSIGN COMPONENT 'SPANID' OF STRUCTURE <dyn_wa> TO <fval>.
+            SPLIT <fval> AT '.' INTO lv_1 lv_2 lv_3 .
+            lv_spanid = lv_3 + 1.
+            CONCATENATE lv_1 '.' lv_2 '.' lv_spanid INTO <fval>.
+            CONDENSE <fval> NO-GAPS.
+            ASSIGN COMPONENT 'CDATE' OF STRUCTURE <dyn_wa> TO <fval>.
+            <fval> = sy-datum.
+            ASSIGN COMPONENT 'CTIME' OF STRUCTURE <dyn_wa> TO <fval>.
+            <fval> = sy-uzeit.
+            ASSIGN COMPONENT 'USERID' OF STRUCTURE <dyn_wa> TO <fval>.
+            <fval> = sy-uname.
+            ASSIGN COMPONENT 'USERNAME' OF STRUCTURE <dyn_wa> TO <fval>.
+            CLEAR lv_name.
+            SELECT SINGLE name_text INTO lv_name
+              FROM usr21 INNER JOIN adrp ON usr21~persnumber = adrp~persnumber
+              WHERE bname = sy-uname.
+            <fval> = lv_name.
+          ENDIF.
+          GET REFERENCE OF <dyn_wa> INTO wa_par-value.
+        ENDLOOP.
+      ENDIF.
+    ELSE. "Paremeter:单值传入"
+      CLEAR lv_json_string .
+      lv_json_string = gs_data-json_data.
+      SHIFT lv_json_string LEFT DELETING LEADING '"'.
+      SHIFT lv_json_string RIGHT DELETING TRAILING '"'.
+      CONDENSE lv_json_string NO-GAPS.
+      CREATE DATA dyn_value TYPE (ref). "参照传入参数类型创建动态字段
+      ASSIGN dyn_value->* TO <dref>.
+      <dref> = lv_json_string.
+      GET REFERENCE OF <dref> INTO wa_par-value.
+    ENDIF.
+
+    INSERT wa_par INTO TABLE it_par.
+    CLEAR wa_par.
+  ELSE.
+    IF optional IS INITIAL.
+      CLEAR wa_par.
+      wa_par-name = parameter.
+      IF typ EQ 'I'.
+        wa_par-kind = abap_func_exporting.
+        CREATE DATA dyn_value TYPE (ref).
+        ASSIGN dyn_value->* TO <dref>.
+        CLEAR <dref>.
+        GET REFERENCE OF <dref> INTO wa_par-value.
+        INSERT wa_par INTO TABLE it_par.
+        CLEAR wa_par.
+      ELSEIF typ EQ 'T'.
+        wa_par-kind = abap_func_tables.
+        CLEAR ls_dd40vv.
+        SELECT SINGLE * FROM dd40vv INTO ls_dd40vv
+        WHERE typename = ref
+        AND ddlanguage = sy-langu.
+        "判断表类型，如果是 Table Type 则使用 row type 为表结构
+        IF ls_dd40vv IS NOT INITIAL.
+          l_tabname = ls_dd40vv-rowtype.
+        ELSE.
+          l_tabname = ref.
+        ENDIF.
+        "创建动态表结构
+        CREATE DATA dyn_table TYPE TABLE OF (l_tabname).
+        "创建动态内表
+        ASSIGN dyn_table->* TO <dyn_table>.
+        REFRESH <dyn_table>.
+        GET REFERENCE OF <dyn_table> INTO wa_par-value.
+        INSERT wa_par INTO TABLE it_par.
+        CLEAR wa_par.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " PREPARE_PARAMETER_TABLE
