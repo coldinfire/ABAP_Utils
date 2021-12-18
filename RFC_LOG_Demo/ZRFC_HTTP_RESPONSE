@@ -1,0 +1,266 @@
+FUNCTION ZRFC_HTTP_RESPONSE.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(I_DATA) TYPE  ZWS_FRAME_HEAD OPTIONAL
+*"     VALUE(I_JSON) TYPE  STRING OPTIONAL
+*"  EXPORTING
+*"     VALUE(E_DATA) TYPE  ZWS_FRAME_RETURN
+*"----------------------------------------------------------------------
+
+* Connection Parameter
+  DATA:lt_setting TYPE TABLE OF zws_frame_url WITH HEADER LINE.
+  DATA:lv_url TYPE string.
+  DATA:lv_user TYPE string.
+  DATA:lv_password TYPE string.
+  DATA:lv_authorization TYPE string.
+  DATA:lv_error TYPE c.
+* HTTP Connection
+  DATA:lo_http_client TYPE REF TO if_http_client.
+  DATA:lv_json TYPE string.
+  DATA:lv_len TYPE i.
+* Return Log Table
+  DATA:lt_log TYPE TABLE OF zws_frame_return,
+       ls_log TYPE zws_frame_return.
+
+  DATA:ls_data TYPE zws_frame_head.
+
+  TYPES: BEGIN OF str_result,
+     data TYPE string,
+     code TYPE string,
+     message TYPE string,
+     traceid TYPE string,
+    END OF str_result.
+  DATA: lt_result TYPE TABLE OF str_result,
+        ls_result TYPE str_result.
+
+  DATA: lv_code TYPE sysubrc,
+        lv_message TYPE string.
+
+  CLEAR:lv_error,ls_log.
+
+  MOVE-CORRESPONDING i_data TO ls_log.
+
+* Prepare HTTP Connection Parameter
+  CLEAR lt_setting.
+  REFRESH lt_setting.
+  SELECT *
+    INTO TABLE lt_setting
+    FROM zws_frame_url
+   WHERE func_name = 'ZWS_CALLBACK_HTTP'.
+  IF sy-subrc EQ 0.
+    SORT lt_setting BY zz_key.
+  ENDIF.
+
+  CLEAR: lv_url,lv_user,lv_password,lv_authorization,lv_error.
+  CLEAR: lo_http_client.
+  READ TABLE lt_setting WITH KEY zz_key = 'URL' BINARY SEARCH.
+  IF sy-subrc EQ 0.
+    lv_url = lt_setting-zz_data.
+  ELSE.
+    lv_error = abap_true.
+  ENDIF.
+
+*  READ TABLE lt_setting WITH KEY zz_key = 'USERNAME' BINARY SEARCH.
+*  IF sy-subrc EQ 0.
+*    lv_user = lt_setting-zz_data.
+*  ELSE.
+*    lv_error = abap_true.
+*  ENDIF.
+
+*  READ TABLE lt_setting WITH KEY zz_key = 'PASSWORD' BINARY SEARCH.
+*  IF sy-subrc EQ 0.
+*    lv_password = lt_setting-zz_data.
+*  ELSE.
+*    lv_error = abap_true.
+*  ENDIF.
+
+*  READ TABLE lt_setting WITH KEY zz_key = 'AUTHORIZATION' BINARY SEARCH.
+*  IF sy-subrc EQ 0.
+*    lv_authorization = lt_setting-zz_data.
+*  ELSE.
+*    lv_error = abap_true.
+*  ENDIF.
+
+  IF lv_error = abap_true.
+    e_data-type = 'E'.
+    e_data-message = '读取系统设置有错，请检查'.
+
+    ls_log-type = 'E'.
+    ls_log-message = '读取系统设置有错，请检查'.
+    APPEND ls_log TO lt_log.
+    MODIFY zws_frame_return FROM TABLE lt_log.
+    COMMIT WORK AND WAIT.
+    RETURN.
+  ENDIF.
+
+* 创建URL连接
+  DO 3 TIMES.
+    CALL METHOD cl_http_client=>create_by_url
+      EXPORTING
+        url                = lv_url
+      IMPORTING
+        client             = lo_http_client
+      EXCEPTIONS
+        argument_not_found = 1
+        plugin_not_active  = 2
+        internal_error     = 3
+        OTHERS             = 4.
+    cl_http_client=>get_last_error(
+      IMPORTING
+        code = lv_code
+        message = lv_message
+    ).
+    IF sy-subrc <> 0.
+      e_data-type = 'E'.
+      e_data-message = '创建链接失败，请检查URL'.
+      WAIT UP TO 15 SECONDS.   "最大发送2次，第一次发送失败，则延迟5秒发送第二次
+    ELSE.
+      CLEAR:e_data.
+      EXIT.
+    ENDIF.
+  ENDDO.
+
+  IF e_data-type IS NOT INITIAL.
+    ls_log-type = 'E'.
+    ls_log-message = '发送HTTP请求失败，请检查'.
+    APPEND ls_log TO lt_log.
+    MODIFY zws_frame_return FROM TABLE lt_log.
+    COMMIT WORK AND WAIT.
+    RETURN.
+  ENDIF.
+
+** USER NAME & PASSWORD
+*  CALL METHOD lo_http_client->authenticate
+*    EXPORTING
+*      username = lv_user
+*      password = lv_password.
+*
+** SET HEADER FIELD
+*  CALL METHOD lo_http_client->request->set_header_field
+*    EXPORTING
+*      name  = 'Authorization'
+*      value = lv_authorization.
+
+*  CALL METHOD lo_http_client->request->set_header_field
+*    EXPORTING
+*      name  = 'Password'
+*      value = 'PISX'.
+
+  CALL METHOD lo_http_client->request->set_header_field
+    EXPORTING
+      name  = 'Content-Type'
+      value = 'application/json'.
+
+* SET content type
+  CALL METHOD lo_http_client->request->set_content_type
+    EXPORTING
+      content_type = 'application/json'.
+
+* data->json
+  DATA:ls_tab TYPE zplm_s_ecn_handle_tab.
+  DATA:lt_tab TYPE zplm_t_ecn_handle_tab.
+
+  IF i_json IS INITIAL.
+    e_data-type = 'E'.
+    e_data-message = '传入参数为空，请检查'.
+
+    ls_log-type = 'E'.
+    ls_log-message = '传入参数为空，请检查'.
+    APPEND ls_log TO lt_log.
+    MODIFY zws_frame_return FROM TABLE lt_log.
+    COMMIT WORK.
+    RETURN.
+  ENDIF.
+
+* set data
+  lv_len = STRLEN( i_json ).
+  CALL METHOD lo_http_client->request->set_cdata
+    EXPORTING
+      data   = i_json
+      length = lv_len.
+
+* send data
+  DO 3 TIMES.
+    CALL METHOD lo_http_client->send
+      EXCEPTIONS
+        http_communication_failure = 1
+        http_invalid_state         = 2
+        http_processing_failed     = 3
+        http_invalid_timeout       = 4
+        OTHERS                     = 5.
+
+    lo_http_client->get_last_error(
+    IMPORTING
+      code = lv_code
+      message = lv_message
+      ).
+    IF sy-subrc <> 0.
+      e_data-type = 'E'.
+      e_data-message = '发送HTTP请求失败，请检查'.
+      WAIT UP TO 15 SECONDS.   "最大发送2次，第一次发送失败，则延迟5秒发送第二次
+    ELSE.
+      CLEAR:e_data.
+      EXIT.
+    ENDIF.
+  ENDDO.
+
+  IF e_data-type IS NOT INITIAL.
+    ls_log-type = 'E'.
+    ls_log-message = '发送HTTP请求失败，请检查'.
+    APPEND ls_log TO lt_log.
+    MODIFY zws_frame_return FROM TABLE lt_log.
+    COMMIT WORK.
+    RETURN.
+  ENDIF.
+*  CHECK e_data-type IS INITIAL.
+
+* receive
+  CALL METHOD lo_http_client->receive
+    EXCEPTIONS
+      http_communication_failure = 1
+      http_invalid_state         = 2
+      http_processing_failed     = 3
+      OTHERS                     = 4.
+  IF sy-subrc <> 0.
+    e_data-type = 'E'.
+    e_data-message = '接收HTTP响应失败，请检查'.
+
+    ls_log-type = 'E'.
+    ls_log-message = '接收HTTP响应失败，请检查'.
+    APPEND ls_log TO lt_log.
+    MODIFY zws_frame_return FROM TABLE lt_log.
+    COMMIT WORK.
+    RETURN.
+  ENDIF.
+
+* Get HTTP Response Data
+  CLEAR lv_json.
+  CALL METHOD lo_http_client->response->get_cdata
+    RECEIVING
+      data = lv_json.
+
+* JSON->DATA
+  CLEAR ls_result.
+  zui2_json=>deserialize( EXPORTING json = lv_json
+                               pretty_name = zui2_json=>pretty_mode-camel_case
+                            CHANGING  data = ls_result ).
+* 动态生成 ALV
+  IF sy-subrc = 0 AND ls_result IS NOT INITIAL.
+    CASE ls_result-code.
+      WHEN 0.
+        ls_log-type = 'S'.
+      WHEN 1.
+        ls_log-type = 'E'.
+      WHEN OTHERS.
+        ls_log-type = 'E'.
+    ENDCASE.
+    CONCATENATE  'HTTP Response Message:' ls_result-message INTO ls_log-message.
+    GET TIME STAMP FIELD ls_log-timestmp.
+    ls_log-username = sy-uname.
+    APPEND ls_log TO lt_log.
+  ENDIF.
+  MODIFY zws_frame_return  FROM TABLE lt_log.
+  COMMIT WORK AND WAIT.
+
+ENDFUNCTION.
