@@ -1,0 +1,74 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZRFC_RESPONSE_HANDLE
+*&---------------------------------------------------------------------*
+
+" RFC返回参数转成JSON字符串 "
+DATA: lv_json_string      TYPE string.
+DATA: lv_response_data    TYPE string.
+DATA: lv_detail_data      TYPE string.
+DATA: lv_func_name        LIKE zfunc_log-func_name.
+DATA: lv_func_parameter   TYPE zfunc_log_data-func_parameter.
+DATA: lv_func_paramtype   TYPE zfunc_log_data-func_paramtype.
+DATA: lt_log_data_detail  TYPE TABLE OF zfunc_log_data_e WITH HEADER LINE.
+
+FIELD-SYMBOLS <ls_zfunc_log_data_e> TYPE zfunc_log_data_e.
+
+SORT lt_zz_log_data_save BY canum.
+LOOP AT lt_zz_log_data_save ASSIGNING <ls_zfunc_log_data_e>.
+  CLEAR <ls_zfunc_log_data_e>-canum.
+ENDLOOP.
+
+IF lt_zz_log_data_save[] IS NOT INITIAL.  " 返回参数内容不为空
+  CLEAR:lv_response_data,lv_detail_data.
+  lv_response_data = lv_detail_data = '{'.
+
+  LOOP AT lt_zz_log_data_save ASSIGNING <ls_zfunc_log_data_e> WHERE func_parameter = 'I_FRAME_HEAD'.
+    CLEAR: lv_func_parameter,lv_func_paramtype.
+    CONCATENATE lv_json_string <ls_zfunc_log_data_e>-json_data INTO lv_json_string.
+    lv_func_parameter = <ls_zfunc_log_data_e>-func_parameter.
+    lv_func_paramtype = <ls_zfunc_log_data_e>-func_paramtype.
+    AT END OF func_parameter.
+      CONCATENATE lv_response_data '"' lv_func_parameter '"' ':' lv_json_string ','
+      INTO lv_response_data.
+      CLEAR: lv_json_string.
+    ENDAT.
+  ENDLOOP.
+
+  lt_log_data_detail[] = lt_zz_log_data_save[].
+  delete lt_log_data_detail WHERE func_parameter = 'I_FRAME_HEAD'.
+
+  LOOP AT lt_log_data_detail ASSIGNING <ls_zfunc_log_data_e> WHERE func_parameter <> 'I_FRAME_HEAD'.
+    CLEAR: lv_func_parameter,lv_func_paramtype.
+    CONCATENATE lv_json_string <ls_zfunc_log_data_e>-json_data INTO lv_json_string.
+    lv_func_parameter = <ls_zfunc_log_data_e>-func_parameter.
+    lv_func_paramtype = <ls_zfunc_log_data_e>-func_paramtype.
+    " 如果是最后一行，则添加JSON结束符 "
+    AT END OF id.
+      CONCATENATE lv_detail_data '"' lv_func_parameter '"' ':' lv_json_string '}'
+      INTO lv_detail_data.
+      CLEAR: lv_json_string.
+      CONTINUE.
+    ENDAT.
+
+    AT END OF func_parameter.
+      CONCATENATE lv_detail_data '"' lv_func_parameter '"' ':' lv_json_string ','
+        INTO lv_detail_data.
+      CLEAR: lv_json_string.
+    ENDAT.
+  ENDLOOP.
+
+  CONCATENATE lv_response_data '"DATA":' lv_detail_data '}' INTO lv_response_data.
+
+ENDIF.
+
+IF lv_response_data IS NOT INITIAL.
+
+  CALL FUNCTION 'ZWSF_HTTP_RESPONSE'  STARTING NEW TASK 'ZWSF_RESPONSE'
+    EXPORTING
+      i_data        = i_frame_head
+      i_json        = lv_response_data
+*   IMPORTING
+*     E_DATA        =
+            .
+
+ENDIF.
