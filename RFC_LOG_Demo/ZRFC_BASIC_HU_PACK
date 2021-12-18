@@ -16,7 +16,7 @@ FUNCTION ZRFC_BASIC_HU_PACK.
 
   zmac_rfc_log_begion.
 
-  INCLUDE zws_request_handle.
+  INCLUDE zrfc_request_handle.
 * Return receive request success message to WM
   e_result  = 'S'.
   e_message = 'Data received successfully'.
