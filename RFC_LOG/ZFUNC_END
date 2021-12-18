@@ -1,0 +1,82 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZFUNC_END
+*&---------------------------------------------------------------------*
+
+IF lv_zz_log_id IS NOT INITIAL. "运行标志
+
+  CLEAR: lt_zz_log_data_save[].
+
+  CALL FUNCTION 'SYSTEM_CALLSTACK'
+    IMPORTING
+*     callstack    = callstack
+      et_callstack = lt_zz_log_callstack.
+
+  "read first function name
+  CLEAR: ls_zz_log_callstack.
+  READ TABLE lt_zz_log_callstack INTO ls_zz_log_callstack WITH KEY eventtype = 'FUNC'.
+  IF ls_zz_log_callstack IS INITIAL.
+    EXIT.
+  ENDIF.
+
+  CLEAR: lt_zz_log_fupararef[].
+  SELECT *
+    INTO CORRESPONDING FIELDS OF TABLE lt_zz_log_fupararef
+    FROM fupararef
+   WHERE funcname = ls_zz_log_callstack-eventname.
+
+  LOOP AT lt_zz_log_fupararef INTO ls_zz_log_fupararef.
+    CLEAR: ls_zz_log_data_save.
+    ls_zz_log_data_save-func_name       = ls_zz_log_callstack-eventname. "函数名称
+    ls_zz_log_data_save-func_paramtype  = ls_zz_log_fupararef-paramtype.
+    ls_zz_log_data_save-func_parameter  = ls_zz_log_fupararef-parameter.
+    ls_zz_log_data_save-func_structure  = ls_zz_log_fupararef-structure.
+    ls_zz_log_data_save-func_defaultval = ls_zz_log_fupararef-defaultval.
+    ls_zz_log_data_save-func_type       = ls_zz_log_fupararef-type.
+    ls_zz_log_data_save-func_class      = ls_zz_log_fupararef-class.
+    ls_zz_log_data_save-func_ref_class  = ls_zz_log_fupararef-ref_class.
+
+    IF ls_zz_log_fupararef-paramtype NE 'T'.
+      ASSIGN (ls_zz_log_fupararef-parameter) TO <fs_zz_log_variable>.
+      IF <fs_zz_log_variable> IS ASSIGNED.
+        IF <fs_zz_log_variable> IS NOT INITIAL OR ls_zz_log_fupararef-defaultval IS NOT INITIAL.
+          lv_zz_log_string = zui2_json=>serialize( data = <fs_zz_log_variable> compress = abap_true pretty_name = abap_true ).
+        ENDIF.
+      ENDIF.
+    ELSE.
+*      lv_zz_log_table_name = ls_zz_log_fupararef-parameter && '[]'.
+      CONCATENATE ls_zz_log_fupararef-parameter '[]' INTO lv_zz_log_table_name.
+      ASSIGN (lv_zz_log_table_name) TO <fs_zz_log_variable_tab>.
+      IF <fs_zz_log_variable_tab> IS ASSIGNED.
+        IF <fs_zz_log_variable_tab> IS NOT INITIAL.
+          lv_zz_log_string = zui2_json=>serialize( data = <fs_zz_log_variable_tab> compress = abap_true pretty_name = abap_true ).
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    WHILE STRLEN( lv_zz_log_string ) > 0.
+      IF STRLEN( lv_zz_log_string ) >= 255 .
+        ls_zz_log_data_save-json_data = lv_zz_log_string.
+        APPEND ls_zz_log_data_save TO lt_zz_log_data_save.
+        SHIFT lv_zz_log_string BY 255 PLACES.
+      ELSE.
+        ls_zz_log_data_save-json_data = lv_zz_log_string.
+        APPEND ls_zz_log_data_save TO lt_zz_log_data_save.
+        CLEAR: lv_zz_log_string.
+      ENDIF.
+    ENDWHILE.
+  ENDLOOP.
+
+  "赋值行项目
+  LOOP AT lt_zz_log_data_save INTO ls_zz_log_data_save.
+    ls_zz_log_data_save-id = lv_zz_log_id.
+    ls_zz_log_data_save-canum = sy-tabix.
+    MODIFY lt_zz_log_data_save FROM ls_zz_log_data_save.
+  ENDLOOP.
+
+  "把数据弄成异步提交模式保存，避免事务提交。
+  CALL FUNCTION 'ZFUNC_SAVE' STARTING NEW TASK 'ZFUNC_END'
+    TABLES
+      t_data_e = lt_zz_log_data_save.
+
+
+ENDIF.
