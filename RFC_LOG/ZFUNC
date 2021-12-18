@@ -1,0 +1,75 @@
+*&---------------------------------------------------------------------*
+*& Report  ZFUNC
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT  zfunc.
+
+"统一管理程序
+INCLUDE zfunc_top.
+INCLUDE zfunc_trans_in. " 输入值进行对应转换
+INCLUDE zfunc_begin.    " 保存数据到log表
+
+"执行业务代码"
+
+"执行完业务代码后，保存执行结束后的参数内容"
+INCLUDE zfunc_trans_out. " 输出值进行对应转换
+INCLUDE zfunc_end.       " 保存结果数据到log表
+
+
+*&---------------------------------------------------------------------*
+*&      Form  update_status
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->IM_LOG_ID  text
+*      -->IM_CODE    text
+*      -->IM_TXT     text
+*----------------------------------------------------------------------*
+FORM update_status USING im_log_id TYPE zfunc_log_data-id
+                         im_code   TYPE bapi_mtype
+                         im_txt    TYPE bapi_msg.
+
+  IF im_log_id IS NOT INITIAL.
+    "必须要调用 zfunc_begin 后才能调用该函数
+    CALL FUNCTION 'ZFUNC_UPDATE_STATU' STARTING NEW TASK 'ZFUNC_LOG'
+      EXPORTING
+        i_id     = im_log_id
+        i_msgty  = im_code
+        i_msgtxt = im_txt.
+  ENDIF.
+
+ENDFORM.                    "update_status
+
+*&---------------------------------------------------------------------*
+*&      Form  update_status_p3
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->IM_LOG_ID  text
+*      -->IM_CODE    text
+*      -->IM_TXT     text
+*      -->IM_USER1   text
+*      -->IM_USER2   text
+*      -->IM_USER3   text
+*----------------------------------------------------------------------*
+FORM u USING im_log_id TYPE zfunc_log_data-id
+      im_code   TYPE bapi_mtype
+      im_txt    TYPE bapi_msg
+      im_user1
+      im_user2
+      im_user3 .
+  IF im_log_id IS NOT INITIAL.
+    CALL FUNCTION 'ZFUNC_UPDATE_STATU' STARTING NEW TASK 'ZFUNC_LOG'
+      EXPORTING
+        i_id     = im_log_id
+        i_msgty  = im_code
+        i_msgtxt = im_txt
+        i_user1  = im_user1
+        i_user2  = im_user2
+        i_user3  = im_user3.
+  ENDIF.
+ENDFORM.                    "update_status_p3
