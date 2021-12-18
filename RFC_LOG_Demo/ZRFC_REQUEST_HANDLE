@@ -1,0 +1,12 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZWS_REQUEST_HANDLE
+*&---------------------------------------------------------------------*
+
+* Save Record To Frame Head Table
+IF lv_zz_log_id IS NOT INITIAL.
+  i_frame_head-func_log_id = lv_zz_log_id.
+  i_frame_head-type = 'S'.
+  i_frame_head-message = 'Data received successfully'.
+  MODIFY zws_frame_head FROM i_frame_head.
+  COMMIT WORK AND WAIT.
+ENDIF.
