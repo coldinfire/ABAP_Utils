@@ -1,0 +1,42 @@
+FUNCTION ZRFC_BASIC_HU_PACK_ASYNC.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(HUKEY) TYPE  BAPIHUKEY-HU_EXID
+*"     VALUE(ITEMPROPOSAL) TYPE  BAPIHUITMPROPOSAL
+*"     VALUE(CWM_ITEMPROPOSAL) TYPE  /CWM/BAPIHUITMPROPOSAL OPTIONAL
+*"     VALUE(I_FRAME_HEAD) TYPE  ZWS_FRAME_HEAD
+*"  EXPORTING
+*"     VALUE(HUITEM) TYPE  BAPIHUITEM
+*"     VALUE(HUHEADER) TYPE  BAPIHUHEADER
+*"     VALUE(CWM_HUITEM) TYPE  /CWM/BAPIHUITEM
+*"  TABLES
+*"      SERIALNUMBERS STRUCTURE  BAPIHUITMSERIAL OPTIONAL
+*"      RETURN STRUCTURE  BAPIRET2
+*"----------------------------------------------------------------------
+
+  INCLUDE zfunc_top.
+  lv_zz_log_id = i_frame_head-func_log_id.
+
+  CALL FUNCTION 'BAPI_HU_PACK'
+    EXPORTING
+      hukey         = hukey
+      itemproposal  = itemproposal
+    IMPORTING
+      huitem        = huitem
+      huheader      = huheader
+    TABLES
+      serialnumbers = serialnumbers
+      return        = return.
+  IF sy-subrc EQ 0.
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+  ENDIF.
+
+  READ TABLE return INDEX 1.
+  zmac_rfc_log_end return-type return-message hukey '' ''.
+
+  INCLUDE zrfc_response_handle.
+
+ENDFUNCTION.
